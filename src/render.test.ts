@@ -104,6 +104,13 @@ describe('renderPush', () => {
     expect(output).not.toMatch(/Would delete/);
     expect(output.match(/Deleted/g)).toHaveLength(1);
   });
+
+  it('a real prune counts the keys actually deleted and notes those kept because they were published meanwhile', () => {
+    const output: string = plain({ ...base, dryRun: false, orphans, pruned: 1 });
+
+    expect(output).toContain('Deleted 1 key(s) that were not in your source files (1 kept: published during the push):');
+    expect(output).not.toMatch(/Deleted 2/);
+  });
 });
 
 describe('summarizePush', () => {

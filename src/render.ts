@@ -72,7 +72,9 @@ export function renderPush(res: PushResponse, view: { prune?: boolean } = {}): s
         ? `${listed.length} key(s) in Translify are not in your source files:`
         : res.dryRun
           ? `${listed.length} key(s) not in your source files would be deleted:`
-          : `Deleted ${listed.length} key(s) that were not in your source files:`;
+          : `Deleted ${res.pruned} key(s) that were not in your source files${
+              listed.length > res.pruned ? ` (${listed.length - res.pruned} kept: published during the push)` : ''
+            }:`;
     lines.push(pc.yellow(`  ${header}`));
     names(listed);
     if (res.pruned === 0 && view.prune !== true) lines.push(pc.dim('  Use --prune to delete them.'));
