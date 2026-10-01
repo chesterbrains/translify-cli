@@ -39,6 +39,9 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
   const responses: PullResponse[] = [];
   const lines: string[] = [];
   let flatHinted = false;
+  // Phase 1 plans every write; nothing touches disk until every request and check has passed.
+  const plan: Array<{ path: string; absolute: string; content: string }> = [];
+  const seen: Map<string, string> = new Map<string, string>();
 
   // Namespaces a fixed-namespace rule owns must not also be written by a `{namespace}` rule.
   const claimed: Set<string> = new Set(
@@ -63,7 +66,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
       lines.push(`warning: ${warning}`);
       if (!flatHinted && NESTED_CONFLICT.test(warning)) {
         flatHinted = true;
-        lines.push('hint: set "jsonStyle": "flat" on this files rule in translify.config.json to keep both keys.');
+        lines.push('hint: set "jsonStyle": "flat" on this files rule in translify.json to keep both keys.');
       }
     }
 
@@ -77,13 +80,29 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
         throw new CliError(EXIT.failed, `Refusing to write ${path}: it resolves outside the project directory.`);
       }
 
+      // Two server locales can back-map to one disk locale; writing both would clobber one every run.
+      const cell = `${file.locale}/${file.namespace}`;
+      const other: string | undefined = seen.get(absolute);
+      if (other !== undefined) {
+        throw new CliError(
+          EXIT.failed,
+          `${path} would be written for both ${other} and ${cell}. Fix the "locales" map so each Translify locale has its own file.`,
+        );
+      }
+      seen.set(absolute, cell);
+
       const existing: string | undefined = await readOrUndefined(absolute);
       if (existing === file.content) continue;
 
       (existing === undefined ? created : changed).push(path);
-      if (opts.check) continue;
-      await mkdir(dirname(absolute), { recursive: true });
-      await writeFile(absolute, file.content);
+      plan.push({ path, absolute, content: file.content });
+    }
+  }
+
+  if (!opts.check) {
+    for (const item of plan) {
+      await mkdir(dirname(item.absolute), { recursive: true });
+      await writeFile(item.absolute, item.content);
     }
   }
 

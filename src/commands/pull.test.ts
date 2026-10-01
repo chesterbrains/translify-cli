@@ -108,7 +108,7 @@ describe('runPull', () => {
   it('does not write namespaces claimed by a fixed-namespace rule (F20)', async () => {
     const cwd = await tmp();
     const client = {
-      get: vi.fn(async () => ({
+      get: vi.fn(async (_p: string, q: Record<string, string>) => (q.format !== 'json' ? { files: [], warnings: [] } : {
         files: [
           { locale: 'it', namespace: 'cart', format: 'json', content: '{}\n' },
           { locale: 'it', namespace: 'app', format: 'json', content: '{}\n' },
@@ -177,5 +177,45 @@ describe('runPull', () => {
     const parsed = JSON.parse(lines[0]!);
     expect(parsed.responses).toHaveLength(2);
     expect(parsed.summary.changed).toEqual(expect.arrayContaining(['locales/it/cart.json']));
+  });
+
+  it('refuses two server locales that back-map to one file, writing nothing', async () => {
+    const cwd = await tmp();
+    const client = {
+      get: vi.fn(async () => ({
+        files: [
+          { locale: 'it', namespace: 'cart', format: 'json', content: '{}\n' },
+          { locale: 'it-IT', namespace: 'cart', format: 'json', content: '{"a":"b"}\n' },
+        ],
+        warnings: [],
+      })),
+    };
+    const cfg: Config = { ...config, files: [config.files[0]!], locales: { it: 'it-IT' } };
+
+    await expect(runPull({}, { cwd, config: cfg, api: client as never, out: quiet })).rejects.toThrow(/it\/cart.*it-IT\/cart/);
+    await expect(stat(join(cwd, 'locales'))).rejects.toThrow();
+  });
+
+  it('writes nothing when a later request fails', async () => {
+    const cwd = await tmp();
+    let calls = 0;
+    const client = {
+      get: vi.fn(async (_p: string, q: Record<string, string>) => {
+        if (++calls === 2) throw new CliError(1, 'boom');
+        return api().get('/cli/v1/pull', q);
+      }),
+    };
+
+    await expect(runPull({}, { cwd, config, api: client as never, out: quiet })).rejects.toThrow('boom');
+    await expect(stat(join(cwd, 'locales'))).rejects.toThrow();
+  });
+
+  it('names translify.json in the flat hint', async () => {
+    const lines: string[] = [];
+    const client = { get: vi.fn(async () => ({ files: [], warnings: ['nested JSON cannot hold both "a" and keys below it'] })) };
+    await runPull({}, { cwd: await tmp(), config: { ...config, files: [config.files[0]!] }, api: client as never, out: (l) => lines.push(l) });
+
+    expect(lines.join('\n')).toContain('translify.json');
+    expect(lines.join('\n')).not.toContain('translify.config.json');
   });
 });
