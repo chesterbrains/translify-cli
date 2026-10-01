@@ -1,0 +1,3 @@
+allowBuilds:
+  # tsx and vitest ship the esbuild binary via platform packages; the postinstall is only a check.
+  esbuild: true
