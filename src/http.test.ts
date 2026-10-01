@@ -89,6 +89,7 @@ describe('Api', () => {
     [500, { code: 'INTERNAL_ERROR' }, 4, /server/i],
     [500, { code: 'DATABASE_ERROR' }, 4, /server/i],
     [503, {}, 4, /server/i],
+    [409, { code: 'ORPHANS_CHANGED' }, 1, /orphans changed since the dry run.*Nothing was written\. Run translify push --prune again to review the new list\./],
     [409, { code: 'TRANSACTION_CONFLICT' }, 4, /conflict/i],
     [400, { code: 'SOMETHING_NEW' }, 1, /SOMETHING_NEW/],
     [401, {}, 2, /HTTP 401/],

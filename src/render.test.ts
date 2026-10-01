@@ -14,9 +14,8 @@ const base: PushResponse = {
   },
   orphans: [],
   pruned: 0,
-  asOf: '2026-10-01T10:00:00.000Z',
+  pruneDigest: 'abc123',
 };
-const T0 = '2026-10-01T09:00:00.000Z';
 
 describe('renderPush', () => {
   it('heads a dry run and a real push differently', () => {
@@ -47,8 +46,8 @@ describe('renderPush', () => {
     const output: string = plain({
       ...base,
       orphans: [
-        { namespace: 'cart', key: 'legacy', published: false, createdAt: T0 },
-        { namespace: 'cart', key: 'live', published: true, createdAt: T0 },
+        { namespace: 'cart', key: 'legacy', published: false },
+        { namespace: 'cart', key: 'live', published: true },
       ],
     });
 
@@ -59,8 +58,15 @@ describe('renderPush', () => {
     expect(output).toMatch(/--prune/);
   });
 
+  it('does not hint --prune when --prune was passed', () => {
+    const res: PushResponse = { ...base, orphans: [{ namespace: 'cart', key: 'legacy', published: false }] };
+
+    expect(stripVTControlCharacters(renderPush(res, { prune: true }))).not.toMatch(/Use --prune/);
+    expect(plain(res)).toMatch(/Use --prune/);
+  });
+
   it('caps a long orphan list', () => {
-    const orphans = Array.from({ length: 25 }, (_, i) => ({ namespace: 'n', key: `k${i}`, published: false, createdAt: T0 }));
+    const orphans = Array.from({ length: 25 }, (_, i) => ({ namespace: 'n', key: `k${i}`, published: false }));
     const output: string = plain({ ...base, orphans });
 
     expect(output).toMatch(/n:k19/);
@@ -74,8 +80,8 @@ describe('renderPush', () => {
   });
 
   const orphans = [
-    { namespace: 'cart', key: 'a', published: false, createdAt: T0 },
-    { namespace: 'cart', key: 'b', published: false, createdAt: T0 },
+    { namespace: 'cart', key: 'a', published: false },
+    { namespace: 'cart', key: 'b', published: false },
   ];
 
   it('a dry run with prune says the keys would be deleted, never that they were', () => {
@@ -103,7 +109,7 @@ describe('renderPush', () => {
 describe('summarizePush', () => {
   it('totals across locales', () => {
     expect(
-      summarizePush({ ...base, orphans: [{ namespace: 'a', key: 'b', published: true, createdAt: T0 }], pruned: 0 }),
+      summarizePush({ ...base, orphans: [{ namespace: 'a', key: 'b', published: true }], pruned: 0 }),
     ).toEqual({
       dryRun: false,
       created: 12,
