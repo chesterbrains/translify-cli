@@ -110,8 +110,11 @@ describe('Api', () => {
     expect(error.message).not.toContain('sk_abc');
   });
 
-  it('names only the npm command for CLI_TOO_OLD', async () => {
-    expect((await fail(426, { code: 'CLI_TOO_OLD', minimum: '0.2.0' })).message).not.toMatch(/install\.sh/);
+  it('names both the npm command and install.sh for CLI_TOO_OLD', async () => {
+    const message: string = (await fail(426, { code: 'CLI_TOO_OLD', minimum: '0.2.0' })).message;
+
+    expect(message).toMatch(/npm i -g @chesterbrains\/translify-cli@latest/);
+    expect(message).toMatch(/releases\/latest\/download\/install\.sh/);
   });
 
   it('lets the code beat the status', async () => {

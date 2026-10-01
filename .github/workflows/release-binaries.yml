@@ -1,0 +1,59 @@
+name: Release binaries
+on:
+  push:
+    tags: ['v*.*.*']
+concurrency:
+  group: release-binaries-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version-file: .bun-version }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Version matches tag
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      # One ubuntu runner cross-compiles every target; Bun downloads each target's runtime.
+      - name: Compile
+        run: |
+          mkdir -p out
+          for target in linux-x64 linux-arm64 darwin-x64 darwin-arm64 windows-x64; do
+            ext=""; [ "$target" = "windows-x64" ] && ext=".exe"
+            bun build src/index.ts --compile --minify --target="bun-$target" --outfile "out/translify-$target$ext"
+          done
+          (cd out && sha256sum translify-* > SHA256SUMS)
+          cat out/SHA256SUMS
+          cp install.sh out/install.sh
+      - name: Smoke the linux binary
+        run: test "$(./out/translify-linux-x64 --version)" = "${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binaries
+          path: |
+            out/translify-*
+            out/SHA256SUMS
+            out/install.sh
+          if-no-files-found: error
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with: { name: binaries, path: out }
+      - uses: softprops/action-gh-release@v2
+        with:
+          # A tag like v0.2.0-rc.1 must never become "latest", which install.sh follows.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            out/translify-*
+            out/SHA256SUMS
+            out/install.sh
