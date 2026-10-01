@@ -58,8 +58,15 @@ export function renderPush(res: PushResponse): string {
     }
   }
 
+  // A dry run with prune also reports `pruned`: what a real push would delete.
   if (res.orphans.length > 0) {
-    lines.push(pc.yellow(`  ${res.orphans.length} key(s) in Translify are not in your source files:`));
+    const header: string =
+      res.pruned === 0
+        ? `${res.orphans.length} key(s) in Translify are not in your source files:`
+        : res.dryRun
+          ? `${res.orphans.length} key(s) not in your source files would be deleted:`
+          : `Deleted ${res.orphans.length} key(s) that were not in your source files:`;
+    lines.push(pc.yellow(`  ${header}`));
     for (const orphan of res.orphans.slice(0, MAX_ORPHANS)) {
       const name: string = `${orphan.namespace}:${orphan.key}`;
       lines.push(orphan.published ? `    ${pc.red(name)} ${pc.red('(published)')}` : `    ${name}`);
@@ -72,7 +79,9 @@ export function renderPush(res: PushResponse): string {
       }
     }
   }
-  if (res.pruned > 0) lines.push(pc.red(`  Deleted ${res.pruned} key(s).`));
+  if (res.pruned > 0 && res.dryRun) lines.push(pc.yellow(`  Would delete ${res.pruned} key(s).`));
+  // A real prune's orphan header already says it; repeat it only when there was no list.
+  if (res.pruned > 0 && !res.dryRun && res.orphans.length === 0) lines.push(pc.red(`  Deleted ${res.pruned} key(s).`));
 
   return lines.join('\n');
 }

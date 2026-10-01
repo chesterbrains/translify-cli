@@ -197,6 +197,16 @@ describe('runPush', () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 
+  it('--overwrite-targets counts every locale when the project has no default locale', async () => {
+    const preview: PushResponse = response({ orphans: [], locales: { en: counts({ updated: 5 }), it: counts({ updated: 2 }) } });
+    const { deps, confirm, get } = await setup(vi.fn().mockResolvedValue(preview));
+    get.mockResolvedValue({ project: { name: 'P', slug: 'p', defaultLocale: null } });
+    confirm.mockResolvedValue(false);
+    await runPush({ overwriteTargets: true }, { ...deps, isTty: true });
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/overwrite 7 existing translation/i));
+  });
+
   it('--overwrite-targets with zero affected cells proceeds without asking (F19)', async () => {
     const preview: PushResponse = response({ orphans: [], locales: { en: counts({ updated: 5 }), it: counts() } });
     const { deps, post, confirm } = await setup(vi.fn().mockResolvedValue(preview));

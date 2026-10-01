@@ -35,7 +35,8 @@ export interface PushResponse {
 }
 
 interface Whoami {
-  project: { defaultLocale: string };
+  /** Null when the project has no default locale: then every locale's updates count. */
+  project: { defaultLocale: string | null };
 }
 
 export interface PushDeps {

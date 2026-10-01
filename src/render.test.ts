@@ -71,6 +71,32 @@ describe('renderPush', () => {
     expect(plain({ ...base, pruned: 4 })).toMatch(/Deleted 4 key\(s\)/);
     expect(plain(base)).not.toMatch(/Deleted/);
   });
+
+  const orphans = [
+    { namespace: 'cart', key: 'a', published: false },
+    { namespace: 'cart', key: 'b', published: false },
+  ];
+
+  it('a dry run with prune says the keys would be deleted, never that they were', () => {
+    const output: string = plain({ ...base, dryRun: true, orphans, pruned: 2 });
+
+    expect(output).toMatch(/^Dry run/);
+    expect(output).toMatch(/Would delete 2 key\(s\)/);
+    expect(output).toMatch(/2 key\(s\) not in your source files would be deleted:/);
+    expect(output).not.toMatch(/Deleted/);
+    expect(output).not.toMatch(/Use --prune/);
+  });
+
+  it('a real prune words the orphan list as deleted keys', () => {
+    const output: string = plain({ ...base, dryRun: false, orphans, pruned: 2 });
+
+    expect(output).toMatch(/Deleted 2 key\(s\) that were not in your source files:/);
+    expect(output).toMatch(/cart:a$/m);
+    expect(output).not.toMatch(/are not in your source files/);
+    expect(output).not.toMatch(/Use --prune/);
+    expect(output).not.toMatch(/Would delete/);
+    expect(output.match(/Deleted/g)).toHaveLength(1);
+  });
 });
 
 describe('summarizePush', () => {
