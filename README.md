@@ -132,7 +132,7 @@ Options:
 - **Source locale: your files win.** Existing source translations are overwritten with what is in the file.
 - **Target locales: Translify fills only the gaps.** Keys that already have a translation are left alone and counted as skipped.
 - `--overwrite-targets` also overwrites existing target translations.
-- `--prune` deletes keys that no longer exist in your source files. Keys that are already published to an environment are never pruned: the push is refused with `ORPHANS_PUBLISHED`.
+- `--prune` deletes keys that no longer exist in your source files. Keys that are already published to an environment are never pruned: the push is refused with `ORPHANS_PUBLISHED`. The real push deletes only the orphans the dry run showed (and you confirmed); a key that became an orphan in between is reported and kept.
 - `--yes` skips the confirmation prompt for the two destructive flags. Without a terminal and without `--yes`, a destructive push is refused and nothing changes.
 - `--dry-run` shows the effect of any combination and writes nothing.
 
