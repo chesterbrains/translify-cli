@@ -218,4 +218,55 @@ describe('runPull', () => {
     expect(lines.join('\n')).toContain('translify.json');
     expect(lines.join('\n')).not.toContain('translify.config.json');
   });
+
+  it('rewrites ARB @@locale to the disk locale, byte-stable across runs', async () => {
+    const cwd = await tmp();
+    const client = {
+      get: vi.fn(async () => ({
+        files: [{ locale: 'en-US', namespace: 'app', format: 'arb', content: '{\n  "@@locale": "en-US",\n  "hi": "Hi"\n}\n' }],
+        warnings: [],
+      })),
+    };
+    const only: Config = { ...config, files: [config.files[1]!] };
+    await runPull({}, { cwd, config: only, api: client as never, out: quiet });
+    const path = join(cwd, 'lib/l10n/app_en_US.arb');
+
+    expect(await readFile(path, 'utf8')).toBe('{\n  "@@locale": "en_US",\n  "hi": "Hi"\n}\n');
+
+    const lines: string[] = [];
+    const before = await stat(path);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await runPull({ check: true }, { cwd, config: only, api: client as never, out: (l) => lines.push(l) })).toBe(0);
+    await runPull({}, { cwd, config: only, api: client as never, out: quiet });
+    expect((await stat(path)).mtimeMs).toBe(before.mtimeMs);
+  });
+
+  it('accepts the underscore @@locale form the server may already send', async () => {
+    const cwd = await tmp();
+    const client = {
+      get: vi.fn(async () => ({
+        files: [{ locale: 'en-US', namespace: 'app', format: 'arb', content: '{\n  "@@locale": "en_US"\n}\n' }],
+        warnings: [],
+      })),
+    };
+    const only: Config = { ...config, files: [config.files[1]!] };
+    await runPull({}, { cwd, config: only, api: client as never, out: quiet });
+
+    expect(await readFile(join(cwd, 'lib/l10n/app_en_US.arb'), 'utf8')).toBe('{\n  "@@locale": "en_US"\n}\n');
+  });
+
+  it('treats a CRLF + BOM checkout as unchanged: no drift, no write', async () => {
+    const cwd = await tmp();
+    await mkdir(join(cwd, 'locales/it'), { recursive: true });
+    const path = join(cwd, 'locales/it/cart.json');
+    await writeFile(path, '\uFEFF{\r\n  "a": "A"\r\n}\r\n');
+    const before = await stat(path);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const only: Config = { ...config, files: [config.files[0]!] };
+
+    expect(await runPull({ check: true }, { cwd, config: only, api: api() as never, out: quiet })).toBe(0);
+    expect(await runPull({}, { cwd, config: only, api: api() as never, out: quiet })).toBe(0);
+    expect((await stat(path)).mtimeMs).toBe(before.mtimeMs);
+    expect(await readFile(path, 'utf8')).toContain('\r\n');
+  });
 });

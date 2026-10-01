@@ -31,10 +31,12 @@ Requires Node 20 or newer.
 # run without installing
 npx @chesterbrains/translify-cli@0.1 --help
 
-# or add it to a project
+# or add it to a project (then `npx translify` runs the local copy)
 npm i -D @chesterbrains/translify-cli
 npx translify --help
 ```
+
+Always use the full scoped name `@chesterbrains/translify-cli` when running through `npx` and no local install exists (including in CI). The unscoped name `translify` on npm is not ours: `npx translify` without a local install would download whatever package holds that name, with your secret key in the environment.
 
 ## Create a secret key
 
@@ -57,11 +59,13 @@ locales/
 
 ```bash
 export TRANSLIFY_SECRET_KEY=sk_...
-npx translify init            # detects your layout, writes translify.json
-npx translify push --dry-run  # show what would change, write nothing
-npx translify push
-npx translify pull
+npx @chesterbrains/translify-cli@0.1 init            # detects your layout, writes translify.json
+npx @chesterbrains/translify-cli@0.1 push --dry-run  # show what would change, write nothing
+npx @chesterbrains/translify-cli@0.1 push
+npx @chesterbrains/translify-cli@0.1 pull
 ```
+
+(If you installed it with `npm i -D`, `npx translify ...` is equivalent.)
 
 `translify.json`:
 
@@ -104,12 +108,16 @@ output-localization-file: app_localizations.dart
 
 ARB files always use a fixed `namespace`. The `locales` map is only needed for locales that Flutter names with an underscore (`app_en_US.arb`); `translify init` suggests it for you.
 
+Set the key first (`export TRANSLIFY_SECRET_KEY=sk_...` or `translify login`), then:
+
 ```bash
-npx translify init
-npx translify push
-npx translify pull
+npx @chesterbrains/translify-cli@0.1 init
+npx @chesterbrains/translify-cli@0.1 push
+npx @chesterbrains/translify-cli@0.1 pull
 flutter gen-l10n
 ```
+
+Translify requires every ARB file to declare `"@@locale"` (Flutter treats it as optional). `translify init` warns about each file that lacks it; add `"@@locale": "<locale>"` to those files before the first push. On `pull`, the CLI writes `@@locale` using the locale name on disk (for example `en_US` in `app_en_US.arb`), as `flutter gen-l10n` expects.
 
 ## Commands
 
@@ -210,6 +218,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `VALIDATION_FAILED` | 1 | Nothing was written. The output lists `file:line key: reason`; fix those entries and push again. |
 | `LOCALE_NOT_FOUND` | 1 | A locale in your files is not enabled in the project. Enable it in Translify, or map it with `locales` in `translify.json`. |
 | `NAMESPACE_NOT_FOUND` | 1 | The namespace does not exist in the project. Create it in Translify or fix the `--namespace` / pattern. |
+| `VALIDATION_FAILED` with `emptySourcePrune` | 1 | `--prune` was refused because a source file in the push has no entries (it would delete the whole namespace). Push the real source file, or drop `--prune`; emptying a namespace is done in the Translify web app. |
 | `ORPHANS_PUBLISHED` | 1 | `--prune` would delete keys that are published. Unpublish them first, or drop `--prune`. |
 | `JSON_STYLE_REQUIRES_JSON` | 1 | `jsonStyle` only applies to rules with `"format": "json"`. Remove it from the other rules. |
 | `BAD_REQUEST` | 1 | The request was malformed. Re-run with `--debug` for the server's message. |
@@ -227,5 +236,8 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |
 | Network error | 4 | `Could not reach <apiUrl>`: check `apiUrl` in `translify.json` and your connection. |
+| Request timed out | 4 | A request took longer than 180 s. Retry, or split the push with `--namespace`. |
+| `Too many files (N > 500)` | 1 | A push carries at most 500 files. Split it with `--namespace`. |
+| `ARB file is missing @@locale` | 1 | Add `"@@locale": "<locale>"` (for example `"en"`) to that `.arb` file and push again. |
 | `No translify.json here` | 1 | Run `translify init` in the repository root. |
 | `status` reports drift | 1 | Run `translify pull` (or `push`) to bring the two sides back in line. |

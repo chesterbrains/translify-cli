@@ -153,6 +153,8 @@ export async function runInit(deps: InitDeps): Promise<ExitCode> {
     return EXIT.failed;
   }
 
+  await warnMissingLocale(deps, matches);
+
   let locales: Record<string, string> = {};
   const me: WhoamiInfo | undefined = await deps.fetchWhoami(apiUrl);
   if (me !== undefined) {
@@ -168,6 +170,20 @@ export async function runInit(deps: InitDeps): Promise<ExitCode> {
   deps.out('Wrote translify.json. The key is not stored there: run `translify login` or set TRANSLIFY_SECRET_KEY.');
 
   return EXIT.ok;
+}
+
+/** Translify requires `@@locale` in every ARB file; Flutter treats it as optional. */
+async function warnMissingLocale(deps: InitDeps, matches: Match[]): Promise<void> {
+  for (const match of matches.filter((entry) => entry.rule.format === 'arb')) {
+    let declared: boolean;
+    try {
+      const doc: unknown = JSON.parse(await readFile(join(deps.cwd, match.path), 'utf8'));
+      declared = typeof doc === 'object' && doc !== null && typeof (doc as Record<string, unknown>)['@@locale'] === 'string';
+    } catch {
+      continue; // unreadable or invalid JSON: push reports it with a line number
+    }
+    if (!declared) deps.out(`warning: ${match.path} has no "@@locale"; push will reject it. Add "@@locale": "${match.locale}".`);
+  }
 }
 
 async function suggestMap(deps: InitDeps, matches: Match[], translifyLocales: string[]): Promise<Record<string, string>> {
