@@ -1,8 +1,75 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 
+import { runPublish } from './commands/publish.js';
+import { runPush, type PushOptions } from './commands/push.js';
+import { loadConfig, type Config } from './config.js';
+import { askConfirm } from './confirm.js';
+import { resolveKey } from './credentials.js';
+import { CliError, EXIT } from './errors.js';
+import { Api } from './http.js';
 import { VERSION } from './version.js';
 
-const program: Command = new Command('translify').version(VERSION).description('Sync translation files with Translify');
+const out = (line: string): void => {
+  process.stdout.write(`${line}\n`);
+};
+const err = (line: string): void => {
+  process.stderr.write(`${line}\n`);
+};
 
-await program.parseAsync(process.argv);
+const withApi = async (): Promise<{ cwd: string; config: Config; api: Api }> => {
+  const cwd: string = process.cwd();
+  const config: Config = await loadConfig(cwd);
+
+  return { cwd, config, api: new Api(config.apiUrl, await resolveKey()) };
+};
+
+const program: Command = new Command('translify')
+  .version(VERSION)
+  .description('Sync translation files with Translify')
+  .option('--debug', 'print error details and stack traces');
+
+program
+  .command('push')
+  .description('Upload source and target files')
+  .option('--dry-run', 'show what would change, write nothing')
+  .option('--overwrite-targets', 'overwrite existing target-locale translations')
+  .option('--prune', 'delete keys missing from your source files')
+  .option('-y, --yes', 'confirm destructive flags without prompting')
+  .option('--namespace <ns>', 'only this namespace')
+  .option('--json', 'machine-readable output')
+  .action(async (opts: PushOptions) => {
+    process.exitCode = await runPush(opts, {
+      ...(await withApi()),
+      isTty: Boolean(process.stdin.isTTY && process.stderr.isTTY),
+      confirm: askConfirm,
+      out,
+      err,
+    });
+  });
+
+program
+  .command('publish <environment>')
+  .description('Publish an environment')
+  .option('--json', 'machine-readable output')
+  .action(async (environment: string, opts: { json?: boolean }) => {
+    process.exitCode = await runPublish(environment, { api: (await withApi()).api, out, json: opts.json });
+  });
+
+try {
+  await program.parseAsync(process.argv);
+} catch (error) {
+  // Read from argv too: a failure can come before commander has parsed the global flags.
+  const debug: boolean = program.opts<{ debug?: boolean }>().debug === true || process.argv.includes('--debug');
+  if (error instanceof CliError) {
+    err(error.message);
+    // `details` is the parsed response body only; Api never puts the key or request headers in it.
+    if (debug && error.details !== undefined) err(JSON.stringify(error.details, null, 2));
+    process.exitCode = error.exitCode;
+  } else {
+    err(`Unexpected error (this is a bug in translify-cli): ${error instanceof Error ? error.message : String(error)}`);
+    if (debug && error instanceof Error && error.stack !== undefined) err(error.stack);
+    else err('Re-run with --debug for details.');
+    process.exitCode = EXIT.network;
+  }
+}
