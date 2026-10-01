@@ -13,6 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version-file: .bun-version }
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: pnpm }
@@ -50,6 +51,8 @@ jobs:
         with: { name: binaries, path: out }
       - uses: softprops/action-gh-release@v2
         with:
+          # A tag like v0.2.0-rc.1 must never become "latest", which install.sh follows.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             out/translify-*
             out/SHA256SUMS
