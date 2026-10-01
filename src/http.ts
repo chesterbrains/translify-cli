@@ -10,7 +10,8 @@ interface ErrorBody {
 const NOT_JSON: unique symbol = Symbol('notJson');
 const MAX_RETRIES: number = 3;
 const MAX_WAIT_MS: number = 60_000;
-const UPGRADE: string = 'npm i -g @chesterbrains/translify-cli@latest';
+const UPGRADE: string =
+  'npm i -g @chesterbrains/translify-cli@latest, or for the standalone binary: curl -fsSL https://github.com/chesterbrains/translify-cli/releases/latest/download/install.sh | sh';
 const sleep = async (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Exit code by the body's `code` first; the status only decides for a code we do not know. */

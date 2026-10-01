@@ -11,6 +11,20 @@ The CLI reads a `translify.json` that maps your translation files (i18next JSON,
 
 ## Install
 
+### Standalone binary (no Node needed)
+
+macOS and Linux (x64 or arm64):
+
+```bash
+curl -fsSL https://github.com/chesterbrains/translify-cli/releases/latest/download/install.sh | sh
+```
+
+The script checks the download against the release's `SHA256SUMS` and installs `translify` to `~/.local/bin` (set `TRANSLIFY_INSTALL_DIR` to change it, `TRANSLIFY_VERSION=v0.1.0` to pin a version). It never uses `sudo`.
+
+On Windows, download `translify-windows-x64.exe` from the [releases page](https://github.com/chesterbrains/translify-cli/releases).
+
+### With Node
+
 Requires Node 20 or newer.
 
 ```bash
@@ -21,8 +35,6 @@ npx @chesterbrains/translify-cli@0.1 --help
 npm i -D @chesterbrains/translify-cli
 npx translify --help
 ```
-
-Standalone binaries (no Node needed) are coming soon.
 
 ## Create a secret key
 
