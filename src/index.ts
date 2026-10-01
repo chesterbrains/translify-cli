@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { confirm, input, password } from '@inquirer/prompts';
+import { confirm, input, password, select } from '@inquirer/prompts';
 import { Command } from 'commander';
 
 import { runInit, type WhoamiInfo } from './commands/init.js';
@@ -60,6 +60,11 @@ program
           guarded(async () => input({ message, default: defaultValue }, { output: process.stderr }), ''),
         confirm: async (message, defaultValue) =>
           guarded(async () => confirm({ message, default: defaultValue }, { output: process.stderr }), false),
+        choose: async (message, options) =>
+          guarded(
+            async () => select({ message, choices: options.map((value) => ({ value })) }, { output: process.stderr }),
+            options[0] ?? '',
+          ),
       },
       fetchWhoami: async (apiUrl: string): Promise<WhoamiInfo | undefined> => {
         try {

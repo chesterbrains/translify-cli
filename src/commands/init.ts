@@ -4,14 +4,16 @@ import fg from 'fast-glob';
 
 import type { Config, FileRule } from '../config.js';
 import type { ExitCode } from '../errors.js';
-import { EXIT } from '../errors.js';
+import type { Match } from '../patterns.js';
+import { CliError, EXIT } from '../errors.js';
 import { findFiles } from '../patterns.js';
 
 const SCHEMA_URL: string = 'https://unpkg.com/@chesterbrains/translify-cli/schema/translify.schema.json';
 const I18NEXT_ROOTS: string[] = ['locales', 'public/locales', 'src/locales', 'src/i18n'];
 const EXAMPLE_RULE: FileRule = { pattern: 'locales/{locale}/{namespace}.json', format: 'json', jsonStyle: 'nested' };
 
-const unquote = (value: string): string => value.replace(/^["']|["']$/g, '').replace(/\/+$/, '');
+const unquote = (value: string): string =>
+  value.replace(/^["']|["']$/g, '').replace(/^(\.\/)+/, '').replace(/\/+$/, '');
 
 async function detectFlutter(cwd: string): Promise<FileRule[]> {
   let yaml: string | undefined;
@@ -29,7 +31,7 @@ async function detectFlutter(cwd: string): Promise<FileRule[]> {
 
   const dir: string = unquote(/^arb-dir:\s*(\S+)/m.exec(yaml)?.[1] ?? 'lib/l10n');
   const template: string = unquote(/^template-arb-file:\s*(\S+)/m.exec(yaml)?.[1] ?? 'app_en.arb');
-  const prefix: string = /^(.*)_[A-Za-z]{2,3}([_-][A-Za-z0-9]+)?\.arb$/.exec(template)?.[1] ?? 'app';
+  const prefix: string = /^(.*?)_[a-z]{2,3}(?:[_-](?:[A-Z]{2}|[0-9]{3}|[A-Z][a-z]{3}))*\.arb$/.exec(template)?.[1] ?? 'app';
 
   return [{ pattern: `${dir}/${prefix}_{locale}.arb`, format: 'arb', namespace: 'app' }];
 }
@@ -80,6 +82,8 @@ export interface InitDeps {
   prompt: {
     input: (message: string, defaultValue: string) => Promise<string>;
     confirm: (message: string, defaultValue: boolean) => Promise<boolean>;
+    /** Picks one option; the first is the default. */
+    choose: (message: string, options: string[]) => Promise<string>;
   };
   /** Undefined when no key is available or the call fails: init then simply skips the locale hints. */
   fetchWhoami: (apiUrl: string) => Promise<WhoamiInfo | undefined>;
@@ -119,11 +123,17 @@ export async function runInit(deps: InitDeps): Promise<ExitCode> {
 
   const detected: FileRule[] = await detectLayout(deps.cwd);
   if (detected.length === 0) {
-    deps.out(`No i18next or Flutter layout found. Wrote an example rule (${EXAMPLE_RULE.pattern}): edit files[] to match your project.`);
+    deps.out(`No i18next or Flutter layout found in ${deps.cwd} (detection looks only in the current directory). Wrote an example rule (${EXAMPLE_RULE.pattern}): edit files[] to match your project.`);
   } else {
     deps.out(`Found: ${detected.map((rule) => `${rule.pattern} (${rule.format})`).join(', ')}`);
   }
-  const files: FileRule[] = detected.length > 0 ? detected : [EXAMPLE_RULE];
+  let files: FileRule[] = detected.length > 0 ? detected : [EXAMPLE_RULE];
+  if (detected.length > 1) {
+    const chosen: string = await deps.prompt.choose('Several layouts found. Which one holds your translations?', detected.map((rule) => rule.pattern));
+    files = detected.filter((rule) => rule.pattern === chosen);
+    if (files.length === 0) files = [detected[0] as FileRule];
+    deps.out(`Dropped: ${detected.filter((rule) => !files.includes(rule)).map((rule) => rule.pattern).join(', ')}`);
+  }
 
   const apiUrl: string = (await deps.prompt.input('Translify API URL', deps.apiUrlDefault)).trim();
   if (!isHttpUrl(apiUrl)) {
@@ -132,11 +142,22 @@ export async function runInit(deps: InitDeps): Promise<ExitCode> {
     return EXIT.failed;
   }
 
+  // A config that cannot resolve its own files would fail on the first push or pull: refuse to write it.
+  let matches: Match[];
+  try {
+    matches = await findFiles({ apiUrl, files, locales: {} }, deps.cwd);
+  } catch (error) {
+    if (!(error instanceof CliError)) throw error;
+    deps.out(`${error.message} Nothing was written.`);
+
+    return EXIT.failed;
+  }
+
   let locales: Record<string, string> = {};
   const me: WhoamiInfo | undefined = await deps.fetchWhoami(apiUrl);
   if (me !== undefined) {
     deps.out(`Project: ${me.project.name}, default locale ${me.project.defaultLocale ?? 'none'}; locales: ${me.locales.join(', ')}`);
-    locales = await suggestMap(deps, files, me.locales);
+    locales = await suggestMap(deps, matches, me.locales);
   }
 
   const config: Config & { $schema: string } = { $schema: SCHEMA_URL, apiUrl, files, locales };
@@ -149,14 +170,8 @@ export async function runInit(deps: InitDeps): Promise<ExitCode> {
   return EXIT.ok;
 }
 
-async function suggestMap(deps: InitDeps, files: FileRule[], translifyLocales: string[]): Promise<Record<string, string>> {
-  let diskLocales: string[];
-  try {
-    const matches = await findFiles({ apiUrl: deps.apiUrlDefault, files, locales: {} }, deps.cwd);
-    diskLocales = [...new Set(matches.map((match) => match.locale))];
-  } catch {
-    return {};
-  }
+async function suggestMap(deps: InitDeps, matches: Match[], translifyLocales: string[]): Promise<Record<string, string>> {
+  const diskLocales: string[] = [...new Set(matches.map((match) => match.locale))];
 
   const missing: string[] = diskLocales.filter((locale) => !translifyLocales.includes(locale));
   const map: Record<string, string> = suggestLocaleMap(diskLocales, translifyLocales);

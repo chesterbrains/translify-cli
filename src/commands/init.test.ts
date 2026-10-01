@@ -49,6 +49,24 @@ describe('detectLayout', () => {
     ]);
   });
 
+  it.each([
+    ['app_en_US.arb', 'app'],
+    ['app_pt_BR.arb', 'app'],
+    ['app_zh_Hant.arb', 'app'],
+    ['my_app_en.arb', 'my_app'],
+    ['strings_en.arb', 'strings'],
+  ])('derives the ARB prefix from %s', async (template, prefix) => {
+    const root: string = await tree({ 'l10n.yaml': `arb-dir: lib/l10n\ntemplate-arb-file: ${template}\n` });
+    expect(await detectLayout(root)).toEqual([{ pattern: `lib/l10n/${prefix}_{locale}.arb`, format: 'arb', namespace: 'app' }]);
+  });
+
+  it('reads l10n.yaml with quotes, comments, CRLF and a leading ./', async () => {
+    const root: string = await tree({
+      'l10n.yaml': '# arb-dir: nope\r\narb-dir: "./lib/i18n/"  # where\r\ntemplate-arb-file: \'app_en_US.arb\'\r\n',
+    });
+    expect(await detectLayout(root)).toEqual([{ pattern: 'lib/i18n/app_{locale}.arb', format: 'arb', namespace: 'app' }]);
+  });
+
   it('returns nothing for an unknown layout', async () => {
     expect(await detectLayout(await tree({ 'README.md': '' }))).toEqual([]);
   });
@@ -74,7 +92,7 @@ const deps = (cwd: string, over: Partial<InitDeps> = {}): { d: InitDeps; out: st
     isTty: true,
     out: (line) => out.push(line),
     apiUrlDefault: 'https://example.test/api',
-    prompt: { input: async (_m, def) => def, confirm: async () => true },
+    prompt: { input: async (_m, def) => def, confirm: async () => true, choose: async (_m, options) => options[0] ?? '' },
     fetchWhoami: async () => undefined,
     ...over,
   };
@@ -124,7 +142,7 @@ describe('runInit', () => {
 
   it('leaves the map out when the suggestion is declined', async () => {
     const cwd: string = await tree({ 'locales/en_US/common.json': '{}' });
-    const { d } = deps(cwd, { fetchWhoami: async () => WHOAMI, prompt: { input: async (_m, def) => def, confirm: async () => false } });
+    const { d } = deps(cwd, { fetchWhoami: async () => WHOAMI, prompt: { input: async (_m, def) => def, confirm: async () => false, choose: async (_m, o) => o[0] ?? '' } });
 
     await runInit(d);
     await expect(loadConfig(cwd)).resolves.toMatchObject({ locales: {} });
@@ -133,7 +151,7 @@ describe('runInit', () => {
   it('refuses to overwrite an existing translify.json without confirmation', async () => {
     const cwd: string = await tree({ 'translify.json': 'KEEP', 'locales/en/a.json': '{}' });
     const confirm = vi.fn().mockResolvedValue(false);
-    const { d } = deps(cwd, { prompt: { input: async (_m, def) => def, confirm } });
+    const { d } = deps(cwd, { prompt: { input: async (_m, def) => def, confirm, choose: vi.fn() } });
 
     expect(await runInit(d)).toBe(1);
     expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/overwrite/i), false);
@@ -147,9 +165,20 @@ describe('runInit', () => {
     await expect(loadConfig(cwd)).resolves.toBeDefined();
   });
 
+  it('asks which layout to keep when several match, and prints what was dropped', async () => {
+    const cwd: string = await tree({ 'locales/en/common.json': '{}', 'public/locales/fr/common.json': '{}' });
+    const choose = vi.fn().mockResolvedValue('public/locales/{locale}/{namespace}.json');
+    const { d, out } = deps(cwd, { prompt: { input: async (_m, def) => def, confirm: async () => true, choose } });
+
+    expect(await runInit(d)).toBe(0);
+    expect(choose).toHaveBeenCalled();
+    expect(out.join('\n')).toMatch(/Dropped: locales\/\{locale\}/);
+    await expect(loadConfig(cwd)).resolves.toMatchObject({ files: [{ pattern: 'public/locales/{locale}/{namespace}.json' }] });
+  });
+
   it('rejects a bad apiUrl and writes nothing', async () => {
     const cwd: string = await tree({ 'locales/en/a.json': '{}' });
-    const { d } = deps(cwd, { prompt: { input: async () => 'not a url', confirm: async () => true } });
+    const { d } = deps(cwd, { prompt: { input: async () => 'not a url', confirm: async () => true, choose: async () => '' } });
 
     expect(await runInit(d)).toBe(1);
     await expect(readFile(join(cwd, 'translify.json'), 'utf8')).rejects.toThrow();
@@ -158,7 +187,7 @@ describe('runInit', () => {
   it('needs a TTY and does not prompt without one', async () => {
     const cwd: string = await tree({});
     const input = vi.fn();
-    const { d, out } = deps(cwd, { isTty: false, prompt: { input, confirm: vi.fn() } });
+    const { d, out } = deps(cwd, { isTty: false, prompt: { input, confirm: vi.fn(), choose: vi.fn() } });
 
     expect(await runInit(d)).toBe(1);
     expect(input).not.toHaveBeenCalled();
