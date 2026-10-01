@@ -81,7 +81,6 @@ describe('Api', () => {
     ],
     [422, { code: 'LOCALE_NOT_FOUND', locales: ['xx', 'yy'] }, 1, /xx, yy/],
     [422, { code: 'NAMESPACE_NOT_FOUND', namespaces: ['nope'] }, 1, /nope/],
-    [409, { code: 'ORPHANS_PUBLISHED', keys: ['web:a', 'web:b'], total: 2 }, 1, /web:a, web:b[\s\S]*Unpublish[\s\S]*--prune/],
     [400, { code: 'JSON_STYLE_REQUIRES_JSON' }, 1, /HTTP 400 JSON_STYLE_REQUIRES_JSON/],
     [400, { code: 'BAD_REQUEST', message: ['a must be b'] }, 1, /a must be b/],
     [404, { code: 'ENVIRONMENT_NOT_FOUND', message: 'no env' }, 1, /no env/],

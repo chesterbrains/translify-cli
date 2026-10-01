@@ -30,8 +30,10 @@ export interface LocaleCounts {
 export interface PushResponse {
   dryRun: boolean;
   locales: Record<string, LocaleCounts>;
-  orphans: Array<{ namespace: string; key: string; published: boolean }>;
+  orphans: Array<{ namespace: string; key: string; published: boolean; createdAt: string }>;
   pruned: number;
+  /** The server's transaction start: a prune only deletes orphans created before it. */
+  asOf: string;
 }
 
 interface Whoami {
@@ -64,7 +66,7 @@ const MAX_FILES: number = 500;
 const orphanId = (orphan: { namespace: string; key: string }): string => `${orphan.namespace}:${orphan.key}`;
 
 /** One form field per file (`file0`, `file1`, …): the server matches by field, never by filename. */
-const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, pruneKeys?: string[]): FormData => {
+const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, pruneAsOf?: string): FormData => {
   const form: FormData = new FormData();
   form.set(
     'manifest',
@@ -81,7 +83,7 @@ const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, pruneK
   form.set('dryRun', String(dryRun));
   form.set('overwriteTargets', String(opts.overwriteTargets === true));
   form.set('prune', String(opts.prune === true));
-  if (pruneKeys !== undefined) form.set('pruneKeys', JSON.stringify(pruneKeys));
+  if (pruneAsOf !== undefined) form.set('pruneAsOf', pruneAsOf);
   for (const { field, match, bytes } of uploads) form.append(field, new File([bytes], match.path));
 
   return form;
@@ -94,9 +96,9 @@ const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, pruneK
  */
 const describeDamage = async (preview: PushResponse, opts: PushOptions, api: Api): Promise<string[]> => {
   const damage: string[] = [];
-  if (opts.prune === true && preview.orphans.length > 0) {
-    damage.push(`delete ${preview.orphans.length} key(s) and all their translations`);
-  }
+  // Published orphans are kept by the server, so they are not part of the damage.
+  const deletable: number = preview.orphans.filter((orphan) => !orphan.published).length;
+  if (opts.prune === true && deletable > 0) damage.push(`delete ${deletable} key(s) and all their translations`);
   if (opts.overwriteTargets === true) {
     const { project }: Whoami = await api.get<Whoami>('/cli/v1/whoami');
     const overwritten: Array<[string, number]> = Object.entries(preview.locales)
@@ -134,8 +136,8 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
       bytes: new Uint8Array(await readFile(join(deps.cwd, match.path))),
     })),
   );
-  const show = (res: PushResponse, preview?: PushResponse): void => {
-    deps.out(opts.json === true ? JSON.stringify({ preview, response: res, summary: summarizePush(res) }) : renderPush(res));
+  const show = (res: PushResponse, preview?: PushResponse, since?: string): void => {
+    deps.out(opts.json === true ? JSON.stringify({ preview, response: res, summary: summarizePush(res) }) : renderPush(res, since));
   };
 
   const destructive: boolean = opts.prune === true || opts.overwriteTargets === true;
@@ -146,7 +148,6 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
     return EXIT.ok;
   }
 
-  // A prune that would delete a published key is refused here (409 ORPHANS_PUBLISHED), before any prompt.
   const preview: PushResponse = await deps.api.post<PushResponse>(PUSH, buildForm(uploads, opts, true));
   const damage: string[] = await describeDamage(preview, opts, deps.api);
 
@@ -169,19 +170,17 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
     }
   }
 
-  // The real push may only delete what the dry run showed (and, if asked, the user confirmed). The published
-  // filter is defensive: the dry run already 409s ORPHANS_PUBLISHED, so none reach here. An empty list, not an
-  // absent one, when none were shown.
-  const confirmed: string[] | undefined =
-    opts.prune === true ? preview.orphans.filter((orphan) => !orphan.published).map(orphanId) : undefined;
-  const res: PushResponse = await deps.api.post<PushResponse>(PUSH, buildForm(uploads, opts, false, confirmed));
-  show(res, preview);
+  // The real push deletes only unpublished orphans created before the dry run's asOf; with every orphan
+  // published, damage is empty, there is no prompt, and the real push prunes nothing.
+  const pruneAsOf: string | undefined = opts.prune === true ? preview.asOf : undefined;
+  const res: PushResponse = await deps.api.post<PushResponse>(PUSH, buildForm(uploads, opts, false, pruneAsOf));
+  show(res, preview, pruneAsOf);
 
-  if (confirmed !== undefined) {
-    const known: Set<string> = new Set(confirmed);
+  if (pruneAsOf !== undefined) {
+    const cutoff: number = Date.parse(pruneAsOf);
     const fresh: string[] = res.orphans
-      .filter((orphan) => !known.has(orphanId(orphan)))
-      .map((orphan) => (orphan.published ? `${orphanId(orphan)} (published)` : orphanId(orphan)));
+      .filter((orphan) => !orphan.published && Date.parse(orphan.createdAt) > cutoff)
+      .map(orphanId);
     if (fresh.length > 0) {
       deps.err(`${fresh.length} new orphan(s) appeared since the dry run and were kept: ${fresh.join(', ')}`);
     }

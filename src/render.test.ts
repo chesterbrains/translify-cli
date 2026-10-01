@@ -14,7 +14,9 @@ const base: PushResponse = {
   },
   orphans: [],
   pruned: 0,
+  asOf: '2026-10-01T10:00:00.000Z',
 };
+const T0 = '2026-10-01T09:00:00.000Z';
 
 describe('renderPush', () => {
   it('heads a dry run and a real push differently', () => {
@@ -41,25 +43,24 @@ describe('renderPush', () => {
     expect(plain(base)).toMatch(/2 unknown key\(s\).*cart:old, cart:gone/);
   });
 
-  it('lists orphans, marks published ones, and hints --prune', () => {
+  it('lists deletable orphans, shows published ones as kept, and hints --prune', () => {
     const output: string = plain({
       ...base,
       orphans: [
-        { namespace: 'cart', key: 'legacy', published: false },
-        { namespace: 'cart', key: 'live', published: true },
+        { namespace: 'cart', key: 'legacy', published: false, createdAt: T0 },
+        { namespace: 'cart', key: 'live', published: true, createdAt: T0 },
       ],
     });
 
-    expect(output).toMatch(/2 key\(s\) in Translify are not in your source files/);
+    expect(output).toMatch(/1 key\(s\) in Translify are not in your source files/);
     expect(output).toMatch(/cart:legacy$/m);
-    expect(output).toMatch(/cart:live .*published/m);
-    expect(output).not.toMatch(/cart:legacy .*published/m);
+    expect(output).toContain('1 key(s) kept — published; unpublish it in Translify to delete it:');
+    expect(output).toMatch(/cart:live$/m);
     expect(output).toMatch(/--prune/);
-    expect(output).toMatch(/unpublish/i);
   });
 
   it('caps a long orphan list', () => {
-    const orphans = Array.from({ length: 25 }, (_, i) => ({ namespace: 'n', key: `k${i}`, published: false }));
+    const orphans = Array.from({ length: 25 }, (_, i) => ({ namespace: 'n', key: `k${i}`, published: false, createdAt: T0 }));
     const output: string = plain({ ...base, orphans });
 
     expect(output).toMatch(/n:k19/);
@@ -73,8 +74,8 @@ describe('renderPush', () => {
   });
 
   const orphans = [
-    { namespace: 'cart', key: 'a', published: false },
-    { namespace: 'cart', key: 'b', published: false },
+    { namespace: 'cart', key: 'a', published: false, createdAt: T0 },
+    { namespace: 'cart', key: 'b', published: false, createdAt: T0 },
   ];
 
   it('a dry run with prune says the keys would be deleted, never that they were', () => {
@@ -102,7 +103,7 @@ describe('renderPush', () => {
 describe('summarizePush', () => {
   it('totals across locales', () => {
     expect(
-      summarizePush({ ...base, orphans: [{ namespace: 'a', key: 'b', published: true }], pruned: 0 }),
+      summarizePush({ ...base, orphans: [{ namespace: 'a', key: 'b', published: true, createdAt: T0 }], pruned: 0 }),
     ).toEqual({
       dryRun: false,
       created: 12,

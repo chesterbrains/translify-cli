@@ -18,11 +18,16 @@ const counts = (over: Partial<PushResponse['locales'][string]> = {}): PushRespon
   ...over,
 });
 
+const T0 = '2026-10-01T09:00:00.000Z';
+const ASOF = '2026-10-01T10:00:00.000Z';
+const LATER = '2026-10-01T10:00:05.000Z';
+
 const response = (over: Partial<PushResponse> = {}): PushResponse => ({
   dryRun: true,
   locales: { en: counts({ created: 1 }) },
-  orphans: [{ namespace: 'cart', key: 'old', published: false }],
+  orphans: [{ namespace: 'cart', key: 'old', published: false, createdAt: T0 }],
   pruned: 0,
+  asOf: ASOF,
   ...over,
 });
 
@@ -194,36 +199,69 @@ describe('runPush', () => {
     expect(formOf(post, 1).get('prune')).toBe('true');
   });
 
-  it('--prune sends the confirmed unpublished orphans as pruneKeys, and no prune list on the dry run', async () => {
-    const preview: PushResponse = response({
-      orphans: [
-        { namespace: 'cart', key: 'old', published: false },
-        { namespace: 'cart', key: 'live', published: true },
-        { namespace: 'home', key: 'gone', published: false },
-      ],
-    });
-    const { deps, post } = await setup(vi.fn().mockResolvedValue(preview));
+  it('--prune sends the dry run asOf as pruneAsOf on the real push, and no pruneKeys anywhere', async () => {
+    const { deps, post } = await setup();
     await runPush({ prune: true, yes: true }, deps);
 
+    expect(formOf(post, 0).get('pruneAsOf')).toBeNull();
+    expect(formOf(post, 1).get('pruneAsOf')).toBe(ASOF);
     expect(formOf(post, 0).get('pruneKeys')).toBeNull();
-    expect(JSON.parse(String(formOf(post, 1).get('pruneKeys')))).toEqual(['cart:old', 'home:gone']);
-  });
-
-  it('--prune with zero orphans sends an empty pruneKeys list', async () => {
-    const { deps, post } = await setup(vi.fn().mockResolvedValue(response({ orphans: [] })));
-    await runPush({ prune: true }, deps);
-
-    expect(formOf(post, 1).get('pruneKeys')).toBe('[]');
-  });
-
-  it('without --prune, pruneKeys is never sent', async () => {
-    const { deps, post } = await setup();
-    await runPush({ overwriteTargets: true, yes: true }, deps);
-
     expect(formOf(post, 1).get('pruneKeys')).toBeNull();
   });
 
-  it('reports orphans that appeared since the dry run as kept', async () => {
+  it('--prune with zero orphans still sends pruneAsOf (F19)', async () => {
+    const { deps, post } = await setup(vi.fn().mockResolvedValue(response({ orphans: [] })));
+    await runPush({ prune: true }, deps);
+
+    expect(formOf(post, 1).get('pruneAsOf')).toBe(ASOF);
+  });
+
+  it('without --prune, pruneAsOf is never sent', async () => {
+    const { deps, post } = await setup();
+    await runPush({ overwriteTargets: true, yes: true }, deps);
+
+    expect(formOf(post, 1).get('pruneAsOf')).toBeNull();
+  });
+
+  const mixed = (): PushResponse =>
+    response({
+      pruned: 2,
+      orphans: [
+        { namespace: 'cart', key: 'old', published: false, createdAt: T0 },
+        { namespace: 'cart', key: 'live', published: true, createdAt: T0 },
+        { namespace: 'home', key: 'gone', published: false, createdAt: T0 },
+      ],
+    });
+
+  it('the confirmation counts and lists only unpublished orphans; published ones are shown as kept', async () => {
+    const { deps, confirm, err, out } = await setup(vi.fn().mockResolvedValue(mixed()));
+    confirm.mockResolvedValue(false);
+    await runPush({ prune: true }, { ...deps, isTty: true });
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/delete 2 key\(s\)/));
+    const shown: string = text([...out, ...err]);
+    expect(shown).toMatch(/cart:old$/m);
+    expect(shown).toMatch(/home:gone$/m);
+    expect(shown).toContain('1 key(s) kept — published; unpublish it in Translify to delete it:');
+    expect(shown).toMatch(/cart:live$/m);
+  });
+
+  it('--prune with only published orphans asks nothing and pushes for real, reporting them kept', async () => {
+    const onlyPublished: PushResponse = response({
+      orphans: [{ namespace: 'cart', key: 'live', published: true, createdAt: T0 }],
+    });
+    const { deps, post, confirm, out } = await setup(vi.fn().mockResolvedValue(onlyPublished));
+    const code = await runPush({ prune: true }, { ...deps, isTty: true });
+
+    expect(code).toBe(0);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(formOf(post, 1).get('dryRun')).toBe('false');
+    expect(formOf(post, 1).get('pruneAsOf')).toBe(ASOF);
+    expect(text(out)).toContain('kept — published; unpublish it in Translify to delete it');
+  });
+
+  it('reports orphans created after the dry run asOf as kept, and lists published ones once', async () => {
     const post = vi
       .fn()
       .mockResolvedValueOnce(response())
@@ -231,21 +269,26 @@ describe('runPush', () => {
         response({
           dryRun: false,
           pruned: 1,
+          asOf: LATER,
           orphans: [
-            { namespace: 'cart', key: 'old', published: false },
-            { namespace: 'cart', key: 'fresh', published: false },
-            { namespace: 'cart', key: 'live', published: true },
+            { namespace: 'cart', key: 'old', published: false, createdAt: T0 },
+            { namespace: 'cart', key: 'fresh', published: false, createdAt: LATER },
+            { namespace: 'cart', key: 'live', published: true, createdAt: LATER },
           ],
         }),
       );
-    const { deps, err } = await setup(post);
+    const { deps, err, out } = await setup(post);
     await runPush({ prune: true, yes: true }, deps);
 
-    expect(text(err)).toContain('2 new orphan(s) appeared since the dry run and were kept: cart:fresh, cart:live (published)');
+    expect(text(err)).toContain('1 new orphan(s) appeared since the dry run and were kept: cart:fresh');
     expect(text(err)).not.toContain('cart:old');
+    expect(text(err)).not.toContain('cart:live');
+    expect(text(out)).toContain('Deleted 1 key(s)');
+    expect(text(out).match(/cart:live/g)).toHaveLength(1);
+    expect(text(out).match(/cart:fresh/g) ?? []).toHaveLength(0);
   });
 
-  it('prints no new-orphan message when the real push lists only confirmed orphans', async () => {
+  it('prints no new-orphan message when no orphan is newer than the dry run', async () => {
     const { deps, err } = await setup();
     await runPush({ prune: true, yes: true }, deps);
 
@@ -288,16 +331,6 @@ describe('runPush', () => {
     expect(post).toHaveBeenCalledTimes(2);
     expect(formOf(post, 1).get('overwriteTargets')).toBe('true');
     expect(formOf(post, 1).get('dryRun')).toBe('false');
-  });
-
-  it('--prune with published orphans surfaces the 409 from the dry run, without a prompt', async () => {
-    const refusal = new CliError(1, 'Published keys would be pruned: cart:old. Unpublish them first, or drop --prune.');
-    const { deps, post, confirm } = await setup(vi.fn().mockRejectedValue(refusal));
-
-    await expect(runPush({ prune: true }, { ...deps, isTty: true })).rejects.toBe(refusal);
-    expect(post).toHaveBeenCalledTimes(1);
-    expect(formOf(post, 0).get('dryRun')).toBe('true');
-    expect(confirm).not.toHaveBeenCalled();
   });
 
   it('--namespace limits the files', async () => {
