@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unpkg.com/@chesterbrains/translify-cli/schema/translify.schema.json",
+  "title": "translify.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiUrl", "files"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "apiUrl": { "type": "string", "format": "uri" },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pattern", "format"],
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\{locale\\}",
+            "description": "Path with {locale} and optionally {namespace}, using / separators."
+          },
+          "format": { "enum": ["json", "xliff", "arb"] },
+          "namespace": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$",
+            "maxLength": 64,
+            "description": "Fixed namespace. Required when the pattern has no {namespace}, and always for arb."
+          },
+          "jsonStyle": { "enum": ["nested", "flat"], "description": "Only for format json. Defaults to nested." }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "format": { "const": "arb" } }, "required": ["format"] },
+            "then": { "required": ["namespace"] }
+          },
+          {
+            "if": { "properties": { "pattern": { "not": { "pattern": "\\{namespace\\}" } } }, "required": ["pattern"] },
+            "then": { "required": ["namespace"] }
+          },
+          {
+            "if": { "properties": { "format": { "enum": ["xliff", "arb"] } }, "required": ["format"] },
+            "then": { "not": { "required": ["jsonStyle"] } }
+          }
+        ]
+      }
+    },
+    "locales": {
+      "type": "object",
+      "description": "Maps a filesystem locale (en_US) to a Translify code (en-US). Unmapped locales pass through.",
+      "additionalProperties": { "type": "string", "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$" }
+    }
+  }
+}
