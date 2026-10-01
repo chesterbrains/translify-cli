@@ -17,7 +17,7 @@ export function credentialsPath(env: Env = process.env): string {
 }
 
 // Messages never echo the value: a mistyped key is still a secret.
-const assertSecret = (key: string): string => {
+export const assertSecret = (key: string): string => {
   if (key.startsWith('pk_')) {
     throw new CliError(
       EXIT.auth,

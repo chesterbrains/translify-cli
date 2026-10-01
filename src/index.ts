@@ -1,6 +1,9 @@
 #!/usr/bin/env node
+import { confirm, input, password } from '@inquirer/prompts';
 import { Command } from 'commander';
 
+import { runInit, type WhoamiInfo } from './commands/init.js';
+import { runLogin } from './commands/login.js';
 import { runPublish } from './commands/publish.js';
 import { runPull, type PullOptions } from './commands/pull.js';
 import { runPush, type PushOptions } from './commands/push.js';
@@ -25,10 +28,67 @@ const withApi = async (): Promise<{ cwd: string; config: Config; api: Api }> => 
   return { cwd, config, api: new Api(config.apiUrl, await resolveKey()) };
 };
 
+const isTty: boolean = Boolean(process.stdin.isTTY && process.stderr.isTTY);
+const DEFAULT_API_URL: string = 'https://translify.tommasofeltrin.work/api';
+
+// Prompts render on stderr so stdout stays clean; Ctrl+C is an ordinary exit, not a bug.
+const guarded = async <T>(run: () => Promise<T>, fallback: T): Promise<T> => {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof Error && error.name === 'ExitPromptError') return fallback;
+    throw error;
+  }
+};
+
 const program: Command = new Command('translify')
   .version(VERSION)
   .description('Sync translation files with Translify')
   .option('--debug', 'print error details and stack traces');
+
+program
+  .command('init')
+  .description('Create translify.json for this repository')
+  .action(async () => {
+    process.exitCode = await runInit({
+      cwd: process.cwd(),
+      isTty,
+      out,
+      apiUrlDefault: DEFAULT_API_URL,
+      prompt: {
+        input: async (message, defaultValue) =>
+          guarded(async () => input({ message, default: defaultValue }, { output: process.stderr }), ''),
+        confirm: async (message, defaultValue) =>
+          guarded(async () => confirm({ message, default: defaultValue }, { output: process.stderr }), false),
+      },
+      fetchWhoami: async (apiUrl: string): Promise<WhoamiInfo | undefined> => {
+        try {
+          return await new Api(apiUrl, await resolveKey()).get<WhoamiInfo>('/cli/v1/whoami');
+        } catch {
+          return undefined;
+        }
+      },
+    });
+  });
+
+program
+  .command('login')
+  .description('Store a secret key for this machine')
+  .action(async () => {
+    let apiUrl: string = DEFAULT_API_URL;
+    try {
+      apiUrl = (await loadConfig(process.cwd())).apiUrl;
+    } catch {
+      // No (valid) config: log in against the default API.
+    }
+    process.exitCode = await runLogin({
+      isTty,
+      apiUrl,
+      out,
+      promptSecret: async () =>
+        guarded(async () => password({ message: 'Secret key (sk_…)', mask: '*' }, { output: process.stderr }), ''),
+    });
+  });
 
 program
   .command('push')
