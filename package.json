@@ -1,0 +1,34 @@
+{
+  "name": "@chesterbrains/translify-cli",
+  "version": "0.1.0",
+  "description": "Push, pull and publish Translify translations from your repository",
+  "type": "module",
+  "bin": { "translify": "dist/index.js" },
+  "files": ["dist", "schema"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.7.2",
+    "commander": "^14.0.3",
+    "fast-glob": "^3.3.3",
+    "picocolors": "^1.1.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@types/node": "^20.19.43",
+    "eslint": "^10.11.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^4.1.11"
+  },
+  "publishConfig": { "access": "public" },
+  "packageManager": "pnpm@11.23.0"
+}
