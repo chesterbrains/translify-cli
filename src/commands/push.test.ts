@@ -194,6 +194,63 @@ describe('runPush', () => {
     expect(formOf(post, 1).get('prune')).toBe('true');
   });
 
+  it('--prune sends the confirmed unpublished orphans as pruneKeys, and no prune list on the dry run', async () => {
+    const preview: PushResponse = response({
+      orphans: [
+        { namespace: 'cart', key: 'old', published: false },
+        { namespace: 'cart', key: 'live', published: true },
+        { namespace: 'home', key: 'gone', published: false },
+      ],
+    });
+    const { deps, post } = await setup(vi.fn().mockResolvedValue(preview));
+    await runPush({ prune: true, yes: true }, deps);
+
+    expect(formOf(post, 0).get('pruneKeys')).toBeNull();
+    expect(JSON.parse(String(formOf(post, 1).get('pruneKeys')))).toEqual(['cart:old', 'home:gone']);
+  });
+
+  it('--prune with zero orphans sends an empty pruneKeys list', async () => {
+    const { deps, post } = await setup(vi.fn().mockResolvedValue(response({ orphans: [] })));
+    await runPush({ prune: true }, deps);
+
+    expect(formOf(post, 1).get('pruneKeys')).toBe('[]');
+  });
+
+  it('without --prune, pruneKeys is never sent', async () => {
+    const { deps, post } = await setup();
+    await runPush({ overwriteTargets: true, yes: true }, deps);
+
+    expect(formOf(post, 1).get('pruneKeys')).toBeNull();
+  });
+
+  it('reports orphans that appeared since the dry run as kept', async () => {
+    const post = vi
+      .fn()
+      .mockResolvedValueOnce(response())
+      .mockResolvedValueOnce(
+        response({
+          dryRun: false,
+          pruned: 1,
+          orphans: [
+            { namespace: 'cart', key: 'old', published: false },
+            { namespace: 'cart', key: 'fresh', published: false },
+          ],
+        }),
+      );
+    const { deps, err } = await setup(post);
+    await runPush({ prune: true, yes: true }, deps);
+
+    expect(text(err)).toContain('1 new orphan(s) appeared since the dry run and were kept: cart:fresh');
+    expect(text(err)).not.toContain('cart:old');
+  });
+
+  it('prints no new-orphan message when the real push lists only confirmed orphans', async () => {
+    const { deps, err } = await setup();
+    await runPush({ prune: true, yes: true }, deps);
+
+    expect(text(err)).not.toContain('appeared since the dry run');
+  });
+
   it('--overwrite-targets counts only target-locale updates, and asks', async () => {
     const preview: PushResponse = response({
       orphans: [],

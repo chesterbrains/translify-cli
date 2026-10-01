@@ -61,8 +61,10 @@ interface Upload {
 const PUSH: string = '/cli/v1/push';
 const MAX_FILES: number = 500;
 
+const orphanId = (orphan: { namespace: string; key: string }): string => `${orphan.namespace}:${orphan.key}`;
+
 /** One form field per file (`file0`, `file1`, …): the server matches by field, never by filename. */
-const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean): FormData => {
+const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, pruneKeys?: string[]): FormData => {
   const form: FormData = new FormData();
   form.set(
     'manifest',
@@ -79,6 +81,7 @@ const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean): FormD
   form.set('dryRun', String(dryRun));
   form.set('overwriteTargets', String(opts.overwriteTargets === true));
   form.set('prune', String(opts.prune === true));
+  if (pruneKeys !== undefined) form.set('pruneKeys', JSON.stringify(pruneKeys));
   for (const { field, match, bytes } of uploads) form.append(field, new File([bytes], match.path));
 
   return form;
@@ -166,7 +169,20 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
     }
   }
 
-  show(await deps.api.post<PushResponse>(PUSH, buildForm(uploads, opts, false)), preview);
+  // The real push may only delete what the dry run showed (and, if asked, the user confirmed). Published
+  // orphans are left out: the server refuses them anyway. An empty list, not an absent one, when none were shown.
+  const confirmed: string[] | undefined =
+    opts.prune === true ? preview.orphans.filter((orphan) => !orphan.published).map(orphanId) : undefined;
+  const res: PushResponse = await deps.api.post<PushResponse>(PUSH, buildForm(uploads, opts, false, confirmed));
+  show(res, preview);
+
+  if (confirmed !== undefined) {
+    const known: Set<string> = new Set(confirmed);
+    const fresh: string[] = res.orphans.map(orphanId).filter((id) => !known.has(id));
+    if (fresh.length > 0) {
+      deps.err(`${fresh.length} new orphan(s) appeared since the dry run and were kept: ${fresh.join(', ')}`);
+    }
+  }
 
   return EXIT.ok;
 }
