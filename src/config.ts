@@ -13,11 +13,15 @@ const fileRule = z
     pattern: z
       .string()
       .min(1)
-      .refine((value) => value.includes('{locale}'), { message: 'must contain {locale}' }),
+      .refine((value) => value.includes('{locale}'), { message: 'must contain {locale}' })
+      .refine((value) => value.split('{locale}').length <= 2 && value.split('{namespace}').length <= 2, {
+        message: 'may use each of {locale} and {namespace} only once',
+      }),
     format: z.enum(['json', 'xliff', 'arb']),
     namespace: z.string().regex(NAMESPACE, 'must be lowercase kebab-case').max(64).optional(),
     jsonStyle: z.enum(['nested', 'flat']).optional(),
   })
+  .strict()
   .superRefine((rule, ctx) => {
     const hasPlaceholder: boolean = rule.pattern.includes('{namespace}');
     if (rule.format === 'arb' && rule.namespace === undefined) {
@@ -39,7 +43,21 @@ const configSchema = z
     // filesystem locale -> Translify code; the target must already be a valid Translify locale
     locales: z.record(z.string(), z.string().regex(LOCALE, 'must be a locale code such as en-US')).default({}),
   })
-  .strict();
+  .strict()
+  .superRefine((config, ctx) => {
+    // The map must be a bijection that cannot chain, or pull and push disagree on a cell's file.
+    const seen = new Map<string, string>();
+    for (const [disk, code] of Object.entries(config.locales)) {
+      const first: string | undefined = seen.get(code);
+      if (first !== undefined) {
+        ctx.addIssue({ code: 'custom', path: ['locales', disk], message: `maps to ${code}, already the target of ${first}` });
+      }
+      seen.set(code, disk);
+      if (code !== disk && Object.hasOwn(config.locales, code)) {
+        ctx.addIssue({ code: 'custom', path: ['locales', disk], message: `target ${code} is itself a mapped disk locale` });
+      }
+    }
+  });
 
 export type Config = Omit<z.infer<typeof configSchema>, '$schema'>;
 export type FileRule = Config['files'][number];

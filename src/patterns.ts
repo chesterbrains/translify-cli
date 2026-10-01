@@ -1,5 +1,6 @@
 import fg from 'fast-glob';
 
+import { CliError, EXIT } from './errors.js';
 import type { Config, FileRule } from './config.js';
 
 export interface Match {
@@ -54,6 +55,26 @@ export async function findFiles(config: Config, cwd: string): Promise<Match[]> {
 
       matches.push({ path, locale: toTranslifyLocale(groups.locale, config), namespace, rule });
     }
+  }
+
+  // One file per (locale, namespace) cell, one rule per file; otherwise push sends a cell twice and pull skips one.
+  const byPath = new Map<string, Match>();
+  const byCell = new Map<string, Match>();
+  for (const match of matches) {
+    const samePath: Match | undefined = byPath.get(match.path);
+    if (samePath !== undefined) {
+      throw new CliError(EXIT.failed, `${match.path} is matched by more than one files rule.`);
+    }
+    const cell = `${match.locale}\u0000${match.namespace}`;
+    const sameCell: Match | undefined = byCell.get(cell);
+    if (sameCell !== undefined) {
+      throw new CliError(
+        EXIT.failed,
+        `${sameCell.path} and ${match.path} both map to locale ${match.locale}, namespace ${match.namespace}. Fix the "locales" map or remove one file.`,
+      );
+    }
+    byPath.set(match.path, match);
+    byCell.set(cell, match);
   }
 
   return matches;

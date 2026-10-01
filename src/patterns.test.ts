@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { CliError } from './errors.js';
 import { findFiles, pathFor, toFsLocale, toTranslifyLocale } from './patterns.js';
 import type { Config } from './config.js';
 
@@ -64,6 +65,39 @@ describe('findFiles', () => {
     expect((await findFiles(config(), root))[0]?.path).toBe('locales/en/cart.json');
     const backslashed = config({ files: [{ pattern: 'locales\\{locale}\\{namespace}.json', format: 'json' }] });
     expect((await findFiles(backslashed, root))[0]?.path).toBe('locales/en/cart.json');
+  });
+});
+
+describe('findFiles safety', () => {
+  it('does not match a decoy that only resembles the pattern', async () => {
+    const root = await tree(['app.en.json', 'appXen.json']);
+    const found = await findFiles(
+      config({ files: [{ pattern: 'app.{locale}.json', format: 'json', namespace: 'app' }] }),
+      root,
+    );
+    expect(found.map(({ path }) => path)).toEqual(['app.en.json']);
+  });
+
+  it('refuses a path matched by two rules', async () => {
+    const root = await tree(['locales/en/cart.json']);
+    const rules = [
+      { pattern: 'locales/{locale}/{namespace}.json', format: 'json' as const },
+      { pattern: 'locales/{locale}/cart.json', format: 'json' as const, namespace: 'cart' },
+    ];
+    const error: unknown = await findFiles(config({ files: rules }), root).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).exitCode).toBe(1);
+    expect((error as CliError).message).toContain('locales/en/cart.json');
+  });
+
+  it('refuses an unmapped locale colliding with a mapped one', async () => {
+    const root = await tree(['lib/app_en_US.arb', 'lib/app_en-US.arb']);
+    const files = [{ pattern: 'lib/app_{locale}.arb', format: 'arb' as const, namespace: 'app' }];
+    const error: unknown = await findFiles(config({ files, locales: { en_US: 'en-US' } }), root).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).message).toMatch(/app_en_US\.arb.*app_en-US\.arb|app_en-US\.arb.*app_en_US\.arb/);
   });
 });
 

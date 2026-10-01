@@ -65,4 +65,35 @@ describe('loadConfig', () => {
     const root = await mkdtemp(join(tmpdir(), 'tfy-'));
     await expect(loadConfig(root)).rejects.toThrow(/translify init/);
   });
+
+  it('rejects a locale map with duplicate targets', async () => {
+    const root = await withConfig({ ...base, locales: { en_US: 'en-US', en: 'en-US' } });
+    await expect(loadConfig(root)).rejects.toThrow(/locales\.en.*en-US/);
+  });
+
+  it('rejects a map target that is another disk locale (chains)', async () => {
+    const root = await withConfig({ ...base, locales: { en: 'en-GB', 'en-GB': 'fr' } });
+    await expect(loadConfig(root)).rejects.toThrow(/locales\.en/);
+  });
+
+  it('rejects repeated placeholders', async () => {
+    const root = await withConfig({
+      apiUrl: 'https://x/api',
+      files: [{ pattern: '{locale}/{locale}.json', format: 'json', namespace: 'a' }],
+    });
+    await expect(loadConfig(root)).rejects.toThrow(/files\.0\.pattern.*once/);
+    const ns = await withConfig({
+      apiUrl: 'https://x/api',
+      files: [{ pattern: '{locale}/{namespace}/{namespace}.json', format: 'json' }],
+    });
+    await expect(loadConfig(ns)).rejects.toThrow(/files\.0\.pattern.*once/);
+  });
+
+  it('rejects unknown fields in a file rule', async () => {
+    const root = await withConfig({
+      apiUrl: 'https://x/api',
+      files: [{ pattern: 'l/{locale}/{namespace}.json', format: 'json', jsonstyle: 'flat' }],
+    });
+    await expect(loadConfig(root)).rejects.toThrow(/files\.0/);
+  });
 });
