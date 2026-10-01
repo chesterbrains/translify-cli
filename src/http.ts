@@ -7,6 +7,7 @@ interface ErrorBody {
   [extra: string]: unknown;
 }
 
+const NOT_JSON: unique symbol = Symbol('notJson');
 const MAX_RETRIES: number = 3;
 const MAX_WAIT_MS: number = 60_000;
 const UPGRADE: string = 'npm i -g @chesterbrains/translify-cli@latest';
@@ -79,7 +80,7 @@ const describeBody = (status: number, body: ErrorBody): string => {
     case 'PUSH_TOO_LARGE':
       return `Push too large (${String(body.entries ?? body.bytes)} over the limit of ${String(body.limit)}). Split it with --namespace.`;
     case 'CLI_TOO_OLD':
-      return `This CLI is too old; ${String(body.minimum)} or newer is required. Upgrade: ${UPGRADE} (or re-run the install.sh one-liner).`;
+      return `This CLI is too old; ${String(body.minimum)} or newer is required. Upgrade: ${UPGRADE}`;
     case 'VALIDATION_FAILED': {
       const lines: string = validationLines(body.errors);
 
@@ -129,7 +130,7 @@ const safeJson = (text: string): unknown => {
   try {
     return JSON.parse(text);
   } catch {
-    return { message: text.slice(0, 200) };
+    return { message: text.slice(0, 200), [NOT_JSON]: true };
   }
 };
 
@@ -181,7 +182,16 @@ export class Api {
 
       const text: string = await response.text();
       const body: unknown = text === '' ? {} : safeJson(text);
-      if (response.ok) return body as T;
+      if (response.ok) {
+        if (typeof body === 'object' && body !== null && NOT_JSON in body) {
+          throw new CliError(
+            EXIT.network,
+            `Unexpected non-JSON response from ${this.apiUrl}; check apiUrl in translify.json.`,
+          );
+        }
+
+        return body as T;
+      }
 
       throw explain(response.status, (typeof body === 'object' && body !== null ? body : {}) as ErrorBody);
     }

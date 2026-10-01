@@ -1,5 +1,5 @@
-import { mkdtemp, readFile, stat, writeFile, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdtemp, readFile, stat, writeFile, mkdir } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -56,6 +56,28 @@ describe('credentials', () => {
       expect((await stat(dirname(path))).mode & 0o777).toBe(0o700);
     }
     expect(await resolveKey(env)).toBe('sk_saved');
+  });
+
+  it.skipIf(process.platform === 'win32')('overwrites a 0644 file as 0600', async () => {
+    const env = await tempEnv();
+    const path = credentialsPath(env);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, 'sk_old\n', { mode: 0o644 });
+    await chmod(path, 0o644);
+    await saveKey('sk_new', env);
+
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    expect((await readFile(path, 'utf8')).trim()).toBe('sk_new');
+  });
+
+  it('ignores empty or relative config dirs', () => {
+    const fallback = join(homedir(), '.config', 'translify', 'credentials');
+    if (process.platform !== 'win32') {
+      expect(credentialsPath({ XDG_CONFIG_HOME: '' })).toBe(fallback);
+      expect(credentialsPath({ XDG_CONFIG_HOME: 'rel/dir' })).toBe(fallback);
+    }
+    expect(credentialsPath({ APPDATA: '', XDG_CONFIG_HOME: '' })).toBe(fallback);
+    expect(credentialsPath({ APPDATA: 'rel' })).toBe(fallback);
   });
 
   it('refuses to save a non-secret key', async () => {

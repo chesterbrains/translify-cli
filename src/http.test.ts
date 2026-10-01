@@ -102,6 +102,18 @@ describe('Api', () => {
     expect(error.message).toMatch(message);
   });
 
+  it('rejects a 2xx that is not JSON', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('<html>spa</html>', { status: 200 }));
+    const error = (await new Api('https://x/api', 'sk_abc', fetchImpl).get('/x').catch((c: unknown) => c)) as CliError;
+    expect(error.exitCode).toBe(4);
+    expect(error.message).toMatch(/non-JSON.*apiUrl/);
+    expect(error.message).not.toContain('sk_abc');
+  });
+
+  it('names only the npm command for CLI_TOO_OLD', async () => {
+    expect((await fail(426, { code: 'CLI_TOO_OLD', minimum: '0.2.0' })).message).not.toMatch(/install\.sh/);
+  });
+
   it('lets the code beat the status', async () => {
     expect((await fail(422, { code: 'KEY_INVALID' })).exitCode).toBe(2);
   });

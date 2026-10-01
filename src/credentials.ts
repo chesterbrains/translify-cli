@@ -1,15 +1,19 @@
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 
 import { CliError, EXIT } from './errors.js';
 
 type Env = Record<string, string | undefined>;
 
 export function credentialsPath(env: Env = process.env): string {
-  if (process.platform === 'win32' && env.APPDATA !== undefined) return join(env.APPDATA, 'translify', 'credentials');
+  // Empty or relative values would resolve against the cwd (often a repo); ignore them, as the XDG spec says.
+  const absolute = (value: string | undefined): string | undefined =>
+    value !== undefined && isAbsolute(value) ? value : undefined;
+  const appData: string | undefined = absolute(env.APPDATA);
+  if (process.platform === 'win32' && appData !== undefined) return join(appData, 'translify', 'credentials');
 
-  return join(env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'translify', 'credentials');
+  return join(absolute(env.XDG_CONFIG_HOME) ?? join(homedir(), '.config'), 'translify', 'credentials');
 }
 
 // Messages never echo the value: a mistyped key is still a secret.
@@ -45,8 +49,15 @@ export async function saveKey(key: string, env: Env = process.env): Promise<stri
   const secret: string = assertSecret(key.trim());
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await chmod(dirname(path), 0o700);
-  await writeFile(path, `${secret}\n`, { mode: 0o600 });
-  await chmod(path, 0o600);
+  // Temp file created 0600, then renamed over the target: never world-readable, never truncated.
+  const temp: string = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(temp, `${secret}\n`, { mode: 0o600, flag: 'wx' });
+    await rename(temp, path);
+  } catch (error) {
+    await rm(temp, { force: true });
+    throw error;
+  }
 
   return path;
 }
