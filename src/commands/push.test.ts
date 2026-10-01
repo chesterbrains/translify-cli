@@ -234,13 +234,14 @@ describe('runPush', () => {
           orphans: [
             { namespace: 'cart', key: 'old', published: false },
             { namespace: 'cart', key: 'fresh', published: false },
+            { namespace: 'cart', key: 'live', published: true },
           ],
         }),
       );
     const { deps, err } = await setup(post);
     await runPush({ prune: true, yes: true }, deps);
 
-    expect(text(err)).toContain('1 new orphan(s) appeared since the dry run and were kept: cart:fresh');
+    expect(text(err)).toContain('2 new orphan(s) appeared since the dry run and were kept: cart:fresh, cart:live (published)');
     expect(text(err)).not.toContain('cart:old');
   });
 

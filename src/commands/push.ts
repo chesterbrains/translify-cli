@@ -169,8 +169,9 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
     }
   }
 
-  // The real push may only delete what the dry run showed (and, if asked, the user confirmed). Published
-  // orphans are left out: the server refuses them anyway. An empty list, not an absent one, when none were shown.
+  // The real push may only delete what the dry run showed (and, if asked, the user confirmed). The published
+  // filter is defensive: the dry run already 409s ORPHANS_PUBLISHED, so none reach here. An empty list, not an
+  // absent one, when none were shown.
   const confirmed: string[] | undefined =
     opts.prune === true ? preview.orphans.filter((orphan) => !orphan.published).map(orphanId) : undefined;
   const res: PushResponse = await deps.api.post<PushResponse>(PUSH, buildForm(uploads, opts, false, confirmed));
@@ -178,7 +179,9 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
 
   if (confirmed !== undefined) {
     const known: Set<string> = new Set(confirmed);
-    const fresh: string[] = res.orphans.map(orphanId).filter((id) => !known.has(id));
+    const fresh: string[] = res.orphans
+      .filter((orphan) => !known.has(orphanId(orphan)))
+      .map((orphan) => (orphan.published ? `${orphanId(orphan)} (published)` : orphanId(orphan)));
     if (fresh.length > 0) {
       deps.err(`${fresh.length} new orphan(s) appeared since the dry run and were kept: ${fresh.join(', ')}`);
     }
