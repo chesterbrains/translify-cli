@@ -144,7 +144,7 @@ Options:
 - **Source locale: your files win.** Existing source translations are overwritten with what is in the file.
 - **Target locales: Translify fills only the gaps.** Keys that already have a translation are left alone and counted as skipped.
 - `--overwrite-targets` also overwrites existing target translations.
-- `--prune` deletes keys that no longer exist in your source files. Keys that are already published to an environment are never pruned: the push is refused with `ORPHANS_PUBLISHED`. The real push deletes only the orphans the dry run showed (and you confirmed); a key that became an orphan in between is reported and kept.
+- `--prune` deletes keys that no longer exist in your source files, together with their translations. Keys that are published to an environment are never deleted: they are listed as kept, and you unpublish them in Translify first. The real push deletes only the orphans that existed at the dry run you confirmed (it sends the dry run's `asOf`); a key that became an orphan in between is reported and kept.
 - `--yes` skips the confirmation prompt for the two destructive flags. Without a terminal and without `--yes`, a destructive push is refused and nothing changes.
 - `--dry-run` shows the effect of any combination and writes nothing.
 
@@ -219,7 +219,6 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `LOCALE_NOT_FOUND` | 1 | A locale in your files is not enabled in the project. Enable it in Translify, or map it with `locales` in `translify.json`. |
 | `NAMESPACE_NOT_FOUND` | 1 | The namespace does not exist in the project. Create it in Translify or fix the `--namespace` / pattern. |
 | `VALIDATION_FAILED` with `emptySourcePrune` | 1 | `--prune` was refused because a source file in the push has no entries (it would delete the whole namespace). Push the real source file, or drop `--prune`; emptying a namespace is done in the Translify web app. |
-| `ORPHANS_PUBLISHED` | 1 | `--prune` would delete keys that are published. Unpublish them first, or drop `--prune`. |
 | `JSON_STYLE_REQUIRES_JSON` | 1 | `jsonStyle` only applies to rules with `"format": "json"`. Remove it from the other rules. |
 | `BAD_REQUEST` | 1 | The request was malformed. Re-run with `--debug` for the server's message. |
 | `ENVIRONMENT_NOT_FOUND` / `ENVIRONMENT_ARCHIVED` | 1 | Check the environment slug passed to `publish` or `--from env:<slug>`, and that it is not archived. |

@@ -41,7 +41,7 @@ export function summarizePush(res: PushResponse): PushSummary {
   return summary;
 }
 
-export function renderPush(res: PushResponse): string {
+export function renderPush(res: PushResponse, since?: string): string {
   const lines: string[] = [res.dryRun ? pc.yellow('Dry run: nothing was written.') : pc.green('Pushed.')];
 
   for (const [locale, c] of Object.entries(res.locales).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
@@ -58,30 +58,34 @@ export function renderPush(res: PushResponse): string {
     }
   }
 
-  // A dry run with prune also reports `pruned`: what a real push would delete.
-  if (res.orphans.length > 0) {
+  // `pruned` is what a dry run would delete or a real push did delete: unpublished orphans only.
+  // `since` (a real prune) is the dry run's asOf: later orphans were kept, and runPush reports them.
+  const isNew = (orphan: PushResponse['orphans'][number]): boolean => since !== undefined && Date.parse(orphan.createdAt) > Date.parse(since);
+  const unpublished = res.orphans.filter((orphan) => !orphan.published);
+  const published = res.orphans.filter((orphan) => orphan.published);
+  const listed = res.pruned > 0 && !res.dryRun ? unpublished.filter((orphan) => !isNew(orphan)) : unpublished;
+  const names = (list: typeof listed): void => {
+    for (const orphan of list.slice(0, MAX_ORPHANS)) lines.push(`    ${orphan.namespace}:${orphan.key}`);
+    if (list.length > MAX_ORPHANS) lines.push(`    …and ${list.length - MAX_ORPHANS} more`);
+  };
+  if (listed.length > 0) {
     const header: string =
       res.pruned === 0
-        ? `${res.orphans.length} key(s) in Translify are not in your source files:`
+        ? `${listed.length} key(s) in Translify are not in your source files:`
         : res.dryRun
-          ? `${res.orphans.length} key(s) not in your source files would be deleted:`
-          : `Deleted ${res.orphans.length} key(s) that were not in your source files:`;
+          ? `${listed.length} key(s) not in your source files would be deleted:`
+          : `Deleted ${listed.length} key(s) that were not in your source files:`;
     lines.push(pc.yellow(`  ${header}`));
-    for (const orphan of res.orphans.slice(0, MAX_ORPHANS)) {
-      const name: string = `${orphan.namespace}:${orphan.key}`;
-      lines.push(orphan.published ? `    ${pc.red(name)} ${pc.red('(published)')}` : `    ${name}`);
-    }
-    if (res.orphans.length > MAX_ORPHANS) lines.push(`    …and ${res.orphans.length - MAX_ORPHANS} more`);
-    if (res.pruned === 0) {
-      lines.push(pc.dim('  Use --prune to delete them.'));
-      if (res.orphans.some((orphan) => orphan.published)) {
-        lines.push(pc.dim('  Published keys cannot be pruned: unpublish them first.'));
-      }
-    }
+    names(listed);
+    if (res.pruned === 0) lines.push(pc.dim('  Use --prune to delete them.'));
+  }
+  if (published.length > 0) {
+    lines.push(pc.yellow(`  ${published.length} key(s) kept — published; unpublish it in Translify to delete it:`));
+    names(published);
   }
   if (res.pruned > 0 && res.dryRun) lines.push(pc.yellow(`  Would delete ${res.pruned} key(s).`));
   // A real prune's orphan header already says it; repeat it only when there was no list.
-  if (res.pruned > 0 && !res.dryRun && res.orphans.length === 0) lines.push(pc.red(`  Deleted ${res.pruned} key(s).`));
+  if (res.pruned > 0 && !res.dryRun && listed.length === 0) lines.push(pc.red(`  Deleted ${res.pruned} key(s).`));
 
   return lines.join('\n');
 }

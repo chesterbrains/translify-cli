@@ -21,7 +21,6 @@ const CODE_EXIT: Record<string, ExitCode> = {
   VALIDATION_FAILED: EXIT.failed,
   LOCALE_NOT_FOUND: EXIT.failed,
   NAMESPACE_NOT_FOUND: EXIT.failed,
-  ORPHANS_PUBLISHED: EXIT.failed,
   JSON_STYLE_REQUIRES_JSON: EXIT.failed,
   BAD_REQUEST: EXIT.failed,
   ENVIRONMENT_NOT_FOUND: EXIT.failed,
@@ -93,12 +92,6 @@ const describeBody = (status: number, body: ErrorBody): string => {
       return `Unknown locale(s): ${list(body.locales)}. They are not enabled in this project.`;
     case 'NAMESPACE_NOT_FOUND':
       return `Unknown namespace(s): ${list(body.namespaces)}.`;
-    case 'ORPHANS_PUBLISHED': {
-      const keys: string = list(body.keys);
-      const more: string = typeof body.total === 'number' ? ` (${body.total} in total)` : '';
-
-      return `Published keys would be pruned: ${keys}${more}. Unpublish them first, or drop --prune.`;
-    }
     case 'TRANSACTION_CONFLICT':
       return 'The server hit a transaction conflict. Try again.';
     case 'RATE_LIMITED':
