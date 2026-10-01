@@ -105,7 +105,7 @@ npx @chesterbrains/translify-cli@0.1 pull
 flutter gen-l10n
 ```
 
-Translify requires every ARB file to declare `"@@locale"` (Flutter treats it as optional). `translify init` warns about each file that lacks it; add `"@@locale": "<locale>"` to those files before the first push. On `pull`, the CLI writes `@@locale` using the locale name on disk (for example `en_US` in `app_en_US.arb`), as `flutter gen-l10n` expects.
+`"@@locale"` is optional in ARB files: when it is absent, the file's locale is used. When it is present it must match the file's locale (case and `_`/`-` are ignored). On `pull`, the CLI writes `@@locale` using the locale name on disk (for example `en_US` in `app_en_US.arb`), as `flutter gen-l10n` expects.
 
 ## Commands
 
@@ -226,6 +226,6 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | Network error | 4 | `Could not reach <apiUrl>`: check `apiUrl` in `translify.json` and your connection. |
 | Request timed out | 4 | A request took longer than 180 s. Retry, or split the push with `--namespace`. |
 | `Too many files (N > 500)` | 1 | A push carries at most 500 files. Split it with `--namespace`. |
-| `ARB file is missing @@locale` | 1 | Add `"@@locale": "<locale>"` (for example `"en"`) to that `.arb` file and push again. |
+| `@@locale` does not match | 1 | `@@locale` is optional, but if an `.arb` file has it, it must match the file's locale (case and `_`/`-` are ignored). Fix or remove it and push again. |
 | `No translify.json here` | 1 | Run `translify init` in the repository root. |
 | `status` reports drift | 1 | Run `translify pull` (or `push`) to bring the two sides back in line. |
