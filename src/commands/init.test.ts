@@ -106,6 +106,22 @@ const WHOAMI: WhoamiInfo = {
 };
 
 describe('runInit', () => {
+  it('warns once per ARB file that has no @@locale, and not for those that do', async () => {
+    const cwd: string = await tree({
+      'lib/l10n/app_en.arb': '{"hi":"Hi"}',
+      'lib/l10n/app_it.arb': '{"@@locale":"it","hi":"Ciao"}',
+      'lib/l10n/app_de.arb': '{"hi":"Hallo"}',
+    });
+    const { d, out } = deps(cwd);
+
+    expect(await runInit(d)).toBe(0);
+    const warnings: string[] = out.filter((line) => line.startsWith('warning:'));
+    expect(warnings).toHaveLength(2);
+    expect(warnings.join('\n')).toContain('lib/l10n/app_en.arb has no "@@locale"');
+    expect(warnings.join('\n')).toContain('lib/l10n/app_de.arb');
+    expect(warnings.join('\n')).not.toContain('app_it.arb');
+  });
+
   it('writes a translify.json that loadConfig accepts, with $schema and no key', async () => {
     const cwd: string = await tree({ 'public/locales/en/common.json': '{}' });
     const { d } = deps(cwd);

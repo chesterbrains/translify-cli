@@ -27,6 +27,10 @@ jobs:
       # NPM_TOKEN is a "Read and write (stage only)" granular token: this submits the
       # version to npm's stage queue, and a maintainer approves it with 2FA on npmjs.com.
       # Direct publish with bypass-2FA tokens is removed in January 2027.
-      - run: npm stage publish --access public
+      # A prerelease (version contains "-") must never become the `latest` dist-tag.
+      - run: |
+          TAG=""
+          case "$GITHUB_REF_NAME" in *-*) TAG="--tag next" ;; esac
+          npm stage publish --access public $TAG
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

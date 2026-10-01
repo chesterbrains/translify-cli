@@ -10,6 +10,8 @@ interface ErrorBody {
 const NOT_JSON: unique symbol = Symbol('notJson');
 const MAX_RETRIES: number = 3;
 const MAX_WAIT_MS: number = 60_000;
+/** One request, not the whole command: a stalled server must not hang CI forever. */
+const REQUEST_TIMEOUT_MS: number = 180_000;
 const UPGRADE: string = 'npm i -g @chesterbrains/translify-cli@latest';
 const sleep = async (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -169,8 +171,11 @@ export class Api {
     for (let attempt = 0; ; attempt += 1) {
       let response: Response;
       try {
-        response = await this.fetchImpl(url, { ...init, headers });
-      } catch {
+        response = await this.fetchImpl(url, { ...init, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      } catch (error) {
+        if (error instanceof Error && error.name === 'TimeoutError') {
+          throw new CliError(EXIT.network, `Request to ${this.apiUrl} timed out after ${REQUEST_TIMEOUT_MS / 1000}s. Try again, or split the push with --namespace.`);
+        }
         // The cause is dropped on purpose: it can carry the request URL or headers.
         throw new CliError(EXIT.network, `Could not reach ${this.apiUrl}. Check apiUrl and your connection.`);
       }

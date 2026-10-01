@@ -125,6 +125,26 @@ describe('Api', () => {
     expect(error.message).not.toContain('sk_abc');
   });
 
+  it('passes an abort signal and maps a timeout to exit 4 with a "timed out" message', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+    const error = (await new Api('https://x/api', 'sk_abc', fetchImpl).get('/x').catch((caught: unknown) => caught)) as CliError;
+
+    expect(fetchImpl.mock.calls[0]![1].signal).toBeInstanceOf(AbortSignal);
+    expect(error.exitCode).toBe(4);
+    expect(error.message).toMatch(/timed out/);
+    expect(error.message).not.toContain('sk_abc');
+  });
+
+  it('renders an emptySourcePrune row readably', async () => {
+    const error = await fail(422, {
+      code: 'VALIDATION_FAILED',
+      errors: [{ file: 'locales/en/cart.json', reason: 'emptySourcePrune' }],
+    });
+
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toContain('locales/en/cart.json: emptySourcePrune');
+  });
+
   it('posts JSON with a content type and FormData without one', async () => {
     const fetchImpl = vi.fn().mockImplementation(async () => reply(200, {}));
     const api = new Api('https://x/api/', 'sk_abc', fetchImpl);

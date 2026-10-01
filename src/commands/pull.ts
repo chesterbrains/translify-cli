@@ -5,7 +5,7 @@ import type { Config } from '../config.js';
 import type { ExitCode } from '../errors.js';
 import type { Api } from '../http.js';
 import { CliError, EXIT } from '../errors.js';
-import { pathFor, toTranslifyLocale } from '../patterns.js';
+import { pathFor, toFsLocale, toTranslifyLocale } from '../patterns.js';
 
 interface PullResponse {
   files: Array<{ locale: string; namespace: string; format: string; content: string }>;
@@ -32,6 +32,29 @@ const readOrUndefined = async (path: string): Promise<string | undefined> =>
   readFile(path, 'utf8').catch(() => undefined);
 
 const NESTED_CONFLICT: RegExp = /nested JSON cannot hold both/;
+
+/**
+ * Flutter's gen_l10n requires `@@locale` to match the file name, and only the CLI knows the disk
+ * mapping. Rewrites the value in place (key order kept) with the server's own formatting so the
+ * output is byte-stable; content that is not a JSON object is left alone.
+ */
+const withDiskLocale = (content: string, translifyLocale: string, config: Config): string => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return content;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return content;
+  const doc: Record<string, unknown> = parsed as Record<string, unknown>;
+  if (typeof doc['@@locale'] !== 'string') return content;
+  doc['@@locale'] = toFsLocale(translifyLocale, config);
+
+  return `${JSON.stringify(doc, null, 2)}\n`;
+};
+
+/** A Windows checkout (autocrlf, BOM) must not count as drift. */
+const normalizeEol = (text: string): string => text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
 
 export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCode> {
   const changed: string[] = [];
@@ -91,11 +114,12 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
       }
       seen.set(absolute, cell);
 
+      const content: string = rule.format === 'arb' ? withDiskLocale(file.content, file.locale, deps.config) : file.content;
       const existing: string | undefined = await readOrUndefined(absolute);
-      if (existing === file.content) continue;
+      if (existing !== undefined && (existing === content || normalizeEol(existing) === content)) continue;
 
       (existing === undefined ? created : changed).push(path);
-      plan.push({ path, absolute, content: file.content });
+      plan.push({ path, absolute, content });
     }
   }
 

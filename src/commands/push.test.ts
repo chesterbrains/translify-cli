@@ -63,6 +63,19 @@ const formOf = (post: ReturnType<typeof vi.fn>, call: number): FormData => post.
 const text = (lines: string[]): string => stripVTControlCharacters(lines.join('\n'));
 
 describe('runPush', () => {
+  it('refuses more than 500 files before any request', async () => {
+    const { deps, post, cwd } = await setup();
+    await Promise.all(
+      Array.from({ length: 500 }, async (_v, i) => writeFile(join(cwd, `locales/en/n${i}.json`), '{"a":"A"}')),
+    );
+    const error = (await runPush({}, deps).catch((caught: unknown) => caught)) as CliError;
+
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toBe('Too many files (501 > 500): split the push with --namespace.');
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it('sends one multipart request with a file<N> field per file and a manifest mapping to it', async () => {
     const { deps, post } = await setup();
     const code = await runPush({}, deps);

@@ -5,7 +5,7 @@ import type { Config } from '../config.js';
 import type { ExitCode } from '../errors.js';
 import type { Api } from '../http.js';
 import type { Match } from '../patterns.js';
-import { EXIT } from '../errors.js';
+import { CliError, EXIT } from '../errors.js';
 import { findFiles } from '../patterns.js';
 import { renderPush, summarizePush } from '../render.js';
 
@@ -59,6 +59,7 @@ interface Upload {
 }
 
 const PUSH: string = '/cli/v1/push';
+const MAX_FILES: number = 500;
 
 /** One form field per file (`file0`, `file1`, …): the server matches by field, never by filename. */
 const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean): FormData => {
@@ -117,6 +118,10 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
     deps.err(`No files matched the translify.json patterns${scope}.`);
 
     return EXIT.failed;
+  }
+
+  if (matches.length > MAX_FILES) {
+    throw new CliError(EXIT.failed, `Too many files (${matches.length} > ${MAX_FILES}): split the push with --namespace.`);
   }
 
   const uploads: Upload[] = await Promise.all(
