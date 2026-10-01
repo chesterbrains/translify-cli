@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 
 import { runPublish } from './commands/publish.js';
+import { runPull, type PullOptions } from './commands/pull.js';
 import { runPush, type PushOptions } from './commands/push.js';
 import { loadConfig, type Config } from './config.js';
 import { askConfirm } from './confirm.js';
@@ -54,6 +55,28 @@ program
   .option('--json', 'machine-readable output')
   .action(async (environment: string, opts: { json?: boolean }) => {
     process.exitCode = await runPublish(environment, { api: (await withApi()).api, out, json: opts.json });
+  });
+
+program
+  .command('pull')
+  .description('Download translation files')
+  .option('--from <source>', 'working (default) or env:<slug>')
+  .option('--locale <locale>', 'only this locale (as named on disk)')
+  .option('--namespace <ns>', 'only this namespace')
+  .option('--json', 'machine-readable output')
+  .action(async (opts: PullOptions) => {
+    process.exitCode = await runPull(opts, { ...(await withApi()), out });
+  });
+
+program
+  .command('status')
+  .description('Exit 1 if local files differ from Translify (CI check)')
+  .option('--from <source>', 'working (default) or env:<slug>')
+  .option('--locale <locale>', 'only this locale (as named on disk)')
+  .option('--namespace <ns>', 'only this namespace')
+  .option('--json', 'machine-readable output')
+  .action(async (opts: PullOptions) => {
+    process.exitCode = await runPull({ ...opts, check: true }, { ...(await withApi()), out });
   });
 
 try {
