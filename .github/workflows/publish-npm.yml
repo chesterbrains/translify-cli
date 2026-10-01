@@ -1,0 +1,32 @@
+name: Publish npm
+on:
+  push:
+    tags: ['v*.*.*']
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      # Staged publishing needs Node >= 22.14 and npm >= 11.15 (the CLI itself still supports Node 20).
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, registry-url: 'https://registry.npmjs.org' }
+      - run: npm install -g npm@latest && npm --version
+      - run: pnpm install --frozen-lockfile
+      - name: Version matches tag
+        run: |
+          test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+          grep -q "VERSION: string = '$(node -p "require('./package.json').version")'" src/version.ts
+      - run: pnpm test
+      - run: pnpm build
+      # NPM_TOKEN is a "Read and write (stage only)" granular token: this submits the
+      # version to npm's stage queue, and a maintainer approves it with 2FA on npmjs.com.
+      # Direct publish with bypass-2FA tokens is removed in January 2027.
+      - run: npm stage publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
