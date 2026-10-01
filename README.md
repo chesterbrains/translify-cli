@@ -144,7 +144,7 @@ Options:
 - **Source locale: your files win.** Existing source translations are overwritten with what is in the file.
 - **Target locales: Translify fills only the gaps.** Keys that already have a translation are left alone and counted as skipped.
 - `--overwrite-targets` also overwrites existing target translations.
-- `--prune` deletes keys that no longer exist in your source files, together with their translations. Keys that are published to an environment are never deleted: they are listed as kept, and you unpublish them in Translify first. The real push deletes only the orphans that existed at the dry run you confirmed (it sends the dry run's `asOf`); a key that became an orphan in between is reported and kept.
+- `--prune` deletes keys that no longer exist in your source files, together with their translations. Keys that are published to an environment are never deleted: they are listed as kept, and you unpublish them in Translify first. `--prune` deletes exactly the keys you confirmed: the real push sends a digest of the dry run's list, and if anything changed since (keys added, removed or published) the server refuses and you re-run `translify push --prune` to review the new list. A server too old to return that digest makes `--prune` refuse.
 - `--yes` skips the confirmation prompt for the two destructive flags. Without a terminal and without `--yes`, a destructive push is refused and nothing changes.
 - `--dry-run` shows the effect of any combination and writes nothing.
 
@@ -231,6 +231,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `QUOTA_EXCEEDED` | 3 | Your plan limit was reached (usually translation keys). Remove keys, or push a smaller set. |
 | `PUSH_TOO_LARGE` | 4 | Split the push by namespace: `translify push --namespace <ns>`. |
 | `CLI_TOO_OLD` | 4 | Upgrade: `npm i -g @chesterbrains/translify-cli@latest` (or use `npx ...@latest`). |
+| `ORPHANS_CHANGED` | 1 | The orphan list changed between the dry run and the real push (keys were added, removed or published). Nothing was written; run `translify push --prune` again to review the new list. |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |

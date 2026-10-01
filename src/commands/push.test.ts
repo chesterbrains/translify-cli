@@ -18,16 +18,14 @@ const counts = (over: Partial<PushResponse['locales'][string]> = {}): PushRespon
   ...over,
 });
 
-const T0 = '2026-10-01T09:00:00.000Z';
-const ASOF = '2026-10-01T10:00:00.000Z';
-const LATER = '2026-10-01T10:00:05.000Z';
+const DIGEST = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
 const response = (over: Partial<PushResponse> = {}): PushResponse => ({
   dryRun: true,
   locales: { en: counts({ created: 1 }) },
-  orphans: [{ namespace: 'cart', key: 'old', published: false, createdAt: T0 }],
+  orphans: [{ namespace: 'cart', key: 'old', published: false }],
   pruned: 0,
-  asOf: ASOF,
+  pruneDigest: DIGEST,
   ...over,
 });
 
@@ -196,40 +194,54 @@ describe('runPush', () => {
     expect(confirm).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledTimes(2);
     expect(formOf(post, 1).get('dryRun')).toBe('false');
-    expect(formOf(post, 1).get('prune')).toBe('true');
+    expect(formOf(post, 1).get('prune')).toBe('false');
   });
 
-  it('--prune sends the dry run asOf as pruneAsOf on the real push, and no pruneKeys anywhere', async () => {
+  it('--prune sends the dry run pruneDigest with prune=true on the real push, and no pruneKeys', async () => {
     const { deps, post } = await setup();
     await runPush({ prune: true, yes: true }, deps);
 
-    expect(formOf(post, 0).get('pruneAsOf')).toBeNull();
-    expect(formOf(post, 1).get('pruneAsOf')).toBe(ASOF);
+    expect(formOf(post, 0).get('pruneDigest')).toBeNull();
+    expect(formOf(post, 1).get('prune')).toBe('true');
+    expect(formOf(post, 1).get('pruneDigest')).toBe(DIGEST);
     expect(formOf(post, 0).get('pruneKeys')).toBeNull();
     expect(formOf(post, 1).get('pruneKeys')).toBeNull();
   });
 
-  it('--prune with zero orphans still sends pruneAsOf (F19)', async () => {
+  it('--prune with zero deletable orphans sends prune=false and no digest', async () => {
     const { deps, post } = await setup(vi.fn().mockResolvedValue(response({ orphans: [] })));
     await runPush({ prune: true }, deps);
 
-    expect(formOf(post, 1).get('pruneAsOf')).toBe(ASOF);
+    expect(formOf(post, 1).get('prune')).toBe('false');
+    expect(formOf(post, 1).get('pruneDigest')).toBeNull();
   });
 
-  it('without --prune, pruneAsOf is never sent', async () => {
-    const { deps, post } = await setup();
-    await runPush({ overwriteTargets: true, yes: true }, deps);
+  it('--prune against a server without pruneDigest exits 1 and sends no real push', async () => {
+    const { deps, post, err } = await setup(vi.fn().mockResolvedValue(response({ pruneDigest: undefined })));
+    const code = await runPush({ prune: true, yes: true }, deps);
 
-    expect(formOf(post, 1).get('pruneAsOf')).toBeNull();
+    expect(code).toBe(1);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(text(err)).toMatch(/pruneDigest/);
+    expect(text(err)).toMatch(/Nothing was changed/);
+  });
+
+  it('without --prune, no digest is sent and a missing one is fine', async () => {
+    const { deps, post } = await setup(vi.fn().mockResolvedValue(response({ pruneDigest: undefined })));
+    const code = await runPush({ overwriteTargets: true, yes: true }, deps);
+
+    expect(code).toBe(0);
+    expect(formOf(post, 1).get('pruneDigest')).toBeNull();
+    expect(formOf(post, 1).get('prune')).toBe('false');
   });
 
   const mixed = (): PushResponse =>
     response({
       pruned: 2,
       orphans: [
-        { namespace: 'cart', key: 'old', published: false, createdAt: T0 },
-        { namespace: 'cart', key: 'live', published: true, createdAt: T0 },
-        { namespace: 'home', key: 'gone', published: false, createdAt: T0 },
+        { namespace: 'cart', key: 'old', published: false },
+        { namespace: 'cart', key: 'live', published: true },
+        { namespace: 'home', key: 'gone', published: false },
       ],
     });
 
@@ -248,7 +260,7 @@ describe('runPush', () => {
 
   it('--prune with only published orphans asks nothing and pushes for real, reporting them kept', async () => {
     const onlyPublished: PushResponse = response({
-      orphans: [{ namespace: 'cart', key: 'live', published: true, createdAt: T0 }],
+      orphans: [{ namespace: 'cart', key: 'live', published: true }],
     });
     const { deps, post, confirm, out } = await setup(vi.fn().mockResolvedValue(onlyPublished));
     const code = await runPush({ prune: true }, { ...deps, isTty: true });
@@ -257,42 +269,8 @@ describe('runPush', () => {
     expect(confirm).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledTimes(2);
     expect(formOf(post, 1).get('dryRun')).toBe('false');
-    expect(formOf(post, 1).get('pruneAsOf')).toBe(ASOF);
+    expect(formOf(post, 1).get('prune')).toBe('false');
     expect(text(out)).toContain('kept — published; unpublish it in Translify to delete it');
-  });
-
-  it('reports orphans created after the dry run asOf as kept, and lists published ones once', async () => {
-    const post = vi
-      .fn()
-      .mockResolvedValueOnce(response())
-      .mockResolvedValueOnce(
-        response({
-          dryRun: false,
-          pruned: 1,
-          asOf: LATER,
-          orphans: [
-            { namespace: 'cart', key: 'old', published: false, createdAt: T0 },
-            { namespace: 'cart', key: 'fresh', published: false, createdAt: LATER },
-            { namespace: 'cart', key: 'live', published: true, createdAt: LATER },
-          ],
-        }),
-      );
-    const { deps, err, out } = await setup(post);
-    await runPush({ prune: true, yes: true }, deps);
-
-    expect(text(err)).toContain('1 new orphan(s) appeared since the dry run and were kept: cart:fresh');
-    expect(text(err)).not.toContain('cart:old');
-    expect(text(err)).not.toContain('cart:live');
-    expect(text(out)).toContain('Deleted 1 key(s)');
-    expect(text(out).match(/cart:live/g)).toHaveLength(1);
-    expect(text(out).match(/cart:fresh/g) ?? []).toHaveLength(0);
-  });
-
-  it('prints no new-orphan message when no orphan is newer than the dry run', async () => {
-    const { deps, err } = await setup();
-    await runPush({ prune: true, yes: true }, deps);
-
-    expect(text(err)).not.toContain('appeared since the dry run');
   });
 
   it('--overwrite-targets counts only target-locale updates, and asks', async () => {

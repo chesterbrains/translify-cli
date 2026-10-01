@@ -41,7 +41,7 @@ export function summarizePush(res: PushResponse): PushSummary {
   return summary;
 }
 
-export function renderPush(res: PushResponse, since?: string): string {
+export function renderPush(res: PushResponse, view: { prune?: boolean } = {}): string {
   const lines: string[] = [res.dryRun ? pc.yellow('Dry run: nothing was written.') : pc.green('Pushed.')];
 
   for (const [locale, c] of Object.entries(res.locales).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
@@ -59,11 +59,9 @@ export function renderPush(res: PushResponse, since?: string): string {
   }
 
   // `pruned` is what a dry run would delete or a real push did delete: unpublished orphans only.
-  // `since` (a real prune) is the dry run's asOf: later orphans were kept, and runPush reports them.
-  const isNew = (orphan: PushResponse['orphans'][number]): boolean => since !== undefined && Date.parse(orphan.createdAt) > Date.parse(since);
   const unpublished = res.orphans.filter((orphan) => !orphan.published);
   const published = res.orphans.filter((orphan) => orphan.published);
-  const listed = res.pruned > 0 && !res.dryRun ? unpublished.filter((orphan) => !isNew(orphan)) : unpublished;
+  const listed = unpublished;
   const names = (list: typeof listed): void => {
     for (const orphan of list.slice(0, MAX_ORPHANS)) lines.push(`    ${orphan.namespace}:${orphan.key}`);
     if (list.length > MAX_ORPHANS) lines.push(`    …and ${list.length - MAX_ORPHANS} more`);
@@ -77,7 +75,7 @@ export function renderPush(res: PushResponse, since?: string): string {
           : `Deleted ${listed.length} key(s) that were not in your source files:`;
     lines.push(pc.yellow(`  ${header}`));
     names(listed);
-    if (res.pruned === 0) lines.push(pc.dim('  Use --prune to delete them.'));
+    if (res.pruned === 0 && view.prune !== true) lines.push(pc.dim('  Use --prune to delete them.'));
   }
   if (published.length > 0) {
     lines.push(pc.yellow(`  ${published.length} key(s) kept — published; unpublish it in Translify to delete it:`));

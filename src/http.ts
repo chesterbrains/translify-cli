@@ -36,6 +36,7 @@ const CODE_EXIT: Record<string, ExitCode> = {
   DATABASE_ERROR: EXIT.network,
   PUSH_TOO_LARGE: EXIT.network,
   CLI_TOO_OLD: EXIT.network,
+  ORPHANS_CHANGED: EXIT.failed,
   TRANSACTION_CONFLICT: EXIT.network,
   RATE_LIMITED: EXIT.network,
 };
@@ -92,6 +93,8 @@ const describeBody = (status: number, body: ErrorBody): string => {
       return `Unknown locale(s): ${list(body.locales)}. They are not enabled in this project.`;
     case 'NAMESPACE_NOT_FOUND':
       return `Unknown namespace(s): ${list(body.namespaces)}.`;
+    case 'ORPHANS_CHANGED':
+      return 'The orphans changed since the dry run (keys were added, removed or published meanwhile). Nothing was written. Run translify push --prune again to review the new list.';
     case 'TRANSACTION_CONFLICT':
       return 'The server hit a transaction conflict. Try again.';
     case 'RATE_LIMITED':
