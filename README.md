@@ -29,14 +29,14 @@ Requires Node 20 or newer.
 
 ```bash
 # run without installing
-npx @chesterbrains/translify-cli@0.1 --help
+npx translify --help
 
-# or add it to a project (then `npx translify` runs the local copy)
-npm i -D @chesterbrains/translify-cli
+# or add it to a project
+npm i -D translify
 npx translify --help
 ```
 
-Always use the full scoped name `@chesterbrains/translify-cli` when running through `npx` and no local install exists (including in CI). The unscoped name `translify` on npm is not ours: `npx translify` without a local install would download whatever package holds that name, with your secret key in the environment.
+`translify` is an alias of `@chesterbrains/translify-cli`: the same CLI, so `npm i -D @chesterbrains/translify-cli` and `npm i -D translify` both work.
 
 ## Create a secret key
 
@@ -59,13 +59,11 @@ locales/
 
 ```bash
 export TRANSLIFY_SECRET_KEY=sk_...
-npx @chesterbrains/translify-cli@0.1 init            # detects your layout, writes translify.json
-npx @chesterbrains/translify-cli@0.1 push --dry-run  # show what would change, write nothing
-npx @chesterbrains/translify-cli@0.1 push
-npx @chesterbrains/translify-cli@0.1 pull
+npx translify init            # detects your layout, writes translify.json
+npx translify push --dry-run  # show what would change, write nothing
+npx translify push
+npx translify pull
 ```
-
-(If you installed it with `npm i -D`, `npx translify ...` is equivalent.)
 
 `translify.json`:
 
@@ -111,9 +109,9 @@ ARB files always use a fixed `namespace`. The `locales` map is only needed for l
 Set the key first (`export TRANSLIFY_SECRET_KEY=sk_...` or `translify login`), then:
 
 ```bash
-npx @chesterbrains/translify-cli@0.1 init
-npx @chesterbrains/translify-cli@0.1 push
-npx @chesterbrains/translify-cli@0.1 pull
+npx translify init
+npx translify push
+npx translify pull
 flutter gen-l10n
 ```
 
@@ -166,7 +164,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - run: npx @chesterbrains/translify-cli@0.1 push
+      - run: npx translify push
         env:
           TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
 ```
@@ -183,7 +181,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - run: npx @chesterbrains/translify-cli@0.1 status
+      - run: npx translify status
         env:
           TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
 ```
@@ -191,10 +189,10 @@ jobs:
 Pull and publish on deploy:
 
 ```yaml
-- run: npx @chesterbrains/translify-cli@0.1 pull
+- run: npx translify pull
   env:
     TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
-- run: npx @chesterbrains/translify-cli@0.1 publish production
+- run: npx translify publish production
   env:
     TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
 ```
@@ -230,7 +228,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `SCOPE_MISSING` | 2 | The key lacks the scope named in the message (`PULL`, `PUSH` or `PUBLISH`). Create a key that has it. |
 | `QUOTA_EXCEEDED` | 3 | Your plan limit was reached (usually translation keys). Remove keys, or push a smaller set. |
 | `PUSH_TOO_LARGE` | 4 | Split the push by namespace: `translify push --namespace <ns>`. |
-| `CLI_TOO_OLD` | 4 | Upgrade: `npm i -g @chesterbrains/translify-cli@latest` (or use `npx ...@latest`). |
+| `CLI_TOO_OLD` | 4 | Upgrade: `npm i -g @chesterbrains/translify-cli@latest` (or use `npx translify@latest`). |
 | `ORPHANS_CHANGED` | 1 | The orphan list changed between the dry run and the real push (keys were added, removed or published). Nothing was written; run `translify push --prune` again to review the new list. |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
@@ -241,3 +239,13 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `@@locale` does not match | 1 | `@@locale` is optional, but if an `.arb` file has it, it must match the file's locale (case and `_`/`-` are ignored). Fix or remove it and push again. |
 | `No translify.json here` | 1 | Run `translify init` in the repository root. |
 | `status` reports drift | 1 | Run `translify pull` (or `push`) to bring the two sides back in line. |
+
+## Releasing the `translify` alias
+
+The unscoped `translify` package lives in `alias/`. Its `bin.js` just imports `@chesterbrains/translify-cli`, which it depends on at `>=0.1.0 <1.0.0`, so it follows every 0.x release of the CLI without a republish. It only needs republishing (with a bumped range) for a 1.x major:
+
+```bash
+cd alias && npm publish --access public   # then approve the staged release
+```
+
+The alias is not part of the CLI's npm tarball and is ignored by lint, typecheck and tests.
