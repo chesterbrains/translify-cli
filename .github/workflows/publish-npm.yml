@@ -10,12 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # OIDC token for npm trusted publishing (no npm token stored in the repo).
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       # Staged publishing needs Node >= 22.14 and npm >= 11.15 (the CLI itself still supports Node 20).
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: pnpm, registry-url: 'https://registry.npmjs.org' }
+        with: { node-version: 22, cache: pnpm }
       - run: npm install -g npm@latest && npm --version
       - run: pnpm install --frozen-lockfile
       - name: Version matches tag
@@ -24,13 +26,11 @@ jobs:
           grep -q "VERSION: string = '$(node -p "require('./package.json').version")'" src/version.ts
       - run: pnpm test
       - run: pnpm build
-      # NPM_TOKEN is a "Read and write (stage only)" granular token: this submits the
-      # version to npm's stage queue, and a maintainer approves it with 2FA on npmjs.com.
-      # Direct publish with bypass-2FA tokens is removed in January 2027.
+      # Trusted publishing (OIDC): npm trusts this workflow for `stage publish` only, so this
+      # submits the version to the stage queue and a maintainer approves it with 2FA on
+      # npmjs.com. No registry-url on setup-node: its placeholder token would shadow OIDC.
       # A prerelease (version contains "-") must never become the `latest` dist-tag.
       - run: |
           TAG=""
           case "$GITHUB_REF_NAME" in *-*) TAG="--tag next" ;; esac
           npm stage publish --access public $TAG
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
