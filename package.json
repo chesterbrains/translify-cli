@@ -1,8 +1,16 @@
 {
   "name": "@chesterbrains/translify-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Push, pull and publish Translify translations from your repository",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chesterbrains/translify-cli.git"
+  },
+  "homepage": "https://github.com/chesterbrains/translify-cli#readme",
+  "bugs": {
+    "url": "https://github.com/chesterbrains/translify-cli/issues"
+  },
   "type": "module",
   "bin": {
     "translify": "dist/index.js"
