@@ -1,0 +1,13 @@
+{
+  "name": "translify",
+  "version": "0.1.0",
+  "description": "Translify CLI — alias of @chesterbrains/translify-cli",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "translify": "bin.js" },
+  "files": ["bin.js", "README.md", "LICENSE"],
+  "dependencies": { "@chesterbrains/translify-cli": ">=0.1.0 <1.0.0" },
+  "engines": { "node": ">=20" },
+  "repository": { "type": "git", "url": "git+https://github.com/chesterbrains/translify-cli.git" },
+  "homepage": "https://github.com/chesterbrains/translify-cli#readme"
+}
