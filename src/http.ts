@@ -1,4 +1,4 @@
-import { CliError, EXIT, type ExitCode } from './errors.js';
+import { CliError, EXIT, ONLY_APPROVED_NEEDS_WORKING, type ExitCode } from './errors.js';
 import { USER_AGENT } from './version.js';
 
 interface ErrorBody {
@@ -39,6 +39,8 @@ const CODE_EXIT: Record<string, ExitCode> = {
   ORPHANS_CHANGED: EXIT.failed,
   TRANSACTION_CONFLICT: EXIT.network,
   RATE_LIMITED: EXIT.network,
+  REVIEW_DISABLED: EXIT.failed,
+  APPROVED_ONLY_REQUIRES_WORKING: EXIT.failed,
 };
 
 const exitFor = (status: number, code: string | undefined): ExitCode => {
@@ -95,6 +97,10 @@ const describeBody = (status: number, body: ErrorBody): string => {
       return `Unknown namespace(s): ${list(body.namespaces)}.`;
     case 'ORPHANS_CHANGED':
       return 'The orphans changed since the dry run (keys were added, removed or published meanwhile). Nothing was written. Run translify push --prune again to review the new list.';
+    case 'REVIEW_DISABLED':
+      return 'Review is off for this project, so --status draft or needs-review cannot be used. Turn on "Require review" in the project settings, or drop --status.';
+    case 'APPROVED_ONLY_REQUIRES_WORKING':
+      return ONLY_APPROVED_NEEDS_WORKING;
     case 'TRANSACTION_CONFLICT':
       return 'The server hit a transaction conflict. Try again.';
     case 'RATE_LIMITED':

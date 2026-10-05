@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { confirm, input, password, select } from '@inquirer/prompts';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 
 import { runInit, type WhoamiInfo } from './commands/init.js';
 import { runLogin } from './commands/login.js';
 import { runPublish } from './commands/publish.js';
 import { runPull, type PullOptions } from './commands/pull.js';
-import { runPush, type PushOptions } from './commands/push.js';
+import { PUSH_STATUSES, runPush, type PushOptions } from './commands/push.js';
 import { loadConfig, type Config } from './config.js';
 import { askConfirm } from './confirm.js';
 import { resolveKey } from './credentials.js';
@@ -103,6 +103,9 @@ program
   .option('--prune', 'delete keys missing from your source files; published keys are kept; deletes exactly the keys you confirmed, and refuses if anything changed meanwhile (re-run to review)')
   .option('-y, --yes', 'confirm destructive flags without prompting')
   .option('--namespace <ns>', 'only this namespace')
+  .addOption(
+    new Option('--status <status>', 'status target-locale cells land in (default: needs-review when the project requires review, approved otherwise)').choices(PUSH_STATUSES),
+  )
   .option('--json', 'machine-readable output')
   .action(async (opts: PushOptions) => {
     process.exitCode = await runPush(opts, {
@@ -117,9 +120,15 @@ program
 program
   .command('publish <environment>')
   .description('Publish an environment')
+  .option('--fail-on-withheld', 'exit 5 when the review gate withheld any translation (the publish still happens)')
   .option('--json', 'machine-readable output')
-  .action(async (environment: string, opts: { json?: boolean }) => {
-    process.exitCode = await runPublish(environment, { api: (await withApi()).api, out, json: opts.json });
+  .action(async (environment: string, opts: { json?: boolean; failOnWithheld?: boolean }) => {
+    process.exitCode = await runPublish(environment, {
+      api: (await withApi()).api,
+      out,
+      json: opts.json,
+      failOnWithheld: opts.failOnWithheld,
+    });
   });
 
 program
@@ -128,6 +137,7 @@ program
   .option('--from <source>', 'working (default) or env:<slug>')
   .option('--locale <locale>', 'only this locale (as named on disk)')
   .option('--namespace <ns>', 'only this namespace')
+  .option('--only-approved', 'approved text only; translations never approved are left out (working copy only)')
   .option('--json', 'machine-readable output')
   .action(async (opts: PullOptions) => {
     process.exitCode = await runPull(opts, { ...(await withApi()), out });
@@ -139,6 +149,7 @@ program
   .option('--from <source>', 'working (default) or env:<slug>')
   .option('--locale <locale>', 'only this locale (as named on disk)')
   .option('--namespace <ns>', 'only this namespace')
+  .option('--only-approved', 'approved text only; translations never approved are left out (working copy only)')
   .option('--json', 'machine-readable output')
   .action(async (opts: PullOptions) => {
     process.exitCode = await runPull({ ...opts, check: true }, { ...(await withApi()), out });

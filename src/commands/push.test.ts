@@ -354,4 +354,35 @@ describe('runPush', () => {
     expect(doc.response).toEqual(real);
     expect(doc.summary.pruned).toBe(1);
   });
+
+  it('sends no status without --status', async () => {
+    const { deps, post } = await setup(vi.fn().mockResolvedValue(response({ dryRun: false })));
+    await runPush({}, deps);
+
+    expect(formOf(post, 0).has('status')).toBe(false);
+  });
+
+  it('--status maps the kebab-case flag onto the wire enum', async () => {
+    for (const [flag, wire] of [
+      ['draft', 'DRAFT'],
+      ['needs-review', 'NEEDS_REVIEW'],
+      ['approved', 'APPROVED'],
+    ] as const) {
+      const { deps, post } = await setup(vi.fn().mockResolvedValue(response({ dryRun: false })));
+      await runPush({ status: flag }, deps);
+
+      expect(formOf(post, 0).get('status')).toBe(wire);
+    }
+  });
+
+  it('--status rides on both the dry run and the confirmed push', async () => {
+    const { deps, post } = await setup(
+      vi.fn().mockResolvedValueOnce(response()).mockResolvedValueOnce(response({ dryRun: false, pruned: 1 })),
+    );
+    await runPush({ prune: true, yes: true, status: 'draft' }, deps);
+
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(formOf(post, 0).get('status')).toBe('DRAFT');
+    expect(formOf(post, 1).get('status')).toBe('DRAFT');
+  });
 });
