@@ -4,7 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { Config } from '../config.js';
 import type { ExitCode } from '../errors.js';
 import type { Api } from '../http.js';
-import { CliError, EXIT } from '../errors.js';
+import { CliError, EXIT, ONLY_APPROVED_NEEDS_WORKING } from '../errors.js';
 import { pathFor, toFsLocale, toTranslifyLocale } from '../patterns.js';
 
 interface PullResponse {
@@ -18,6 +18,8 @@ export interface PullOptions {
   namespace?: string;
   /** `status`: compare only, write nothing. */
   check?: boolean;
+  /** Approved text only; cells never approved are left out. Working copy only. */
+  onlyApproved?: boolean;
   json?: boolean;
 }
 
@@ -57,6 +59,11 @@ const withDiskLocale = (content: string, translifyLocale: string, config: Config
 const normalizeEol = (text: string): string => text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
 
 export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCode> {
+  // Environments already apply the gate; the server would 400 this, fail before any request.
+  if (opts.onlyApproved && opts.from !== undefined && opts.from !== 'working') {
+    throw new CliError(EXIT.failed, ONLY_APPROVED_NEEDS_WORKING);
+  }
+
   const changed: string[] = [];
   const created: string[] = [];
   const responses: PullResponse[] = [];
@@ -79,6 +86,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     const query: Record<string, string> = { format: rule.format };
     if (rule.format === 'json' && rule.jsonStyle !== undefined) query.jsonStyle = rule.jsonStyle;
     if (opts.from !== undefined) query.from = opts.from;
+    if (opts.onlyApproved) query.approvedOnly = 'true';
     if (opts.locale !== undefined) query.locales = toTranslifyLocale(opts.locale, deps.config);
     const namespace: string | undefined = rule.namespace ?? opts.namespace;
     if (namespace !== undefined) query.namespaces = namespace;

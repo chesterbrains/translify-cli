@@ -1,9 +1,11 @@
 import pc from 'picocolors';
 
-import type { PushResponse } from './commands/push.js';
+import type { PushResponse, TranslationStatus } from './commands/push.js';
 
 const MAX_ORPHANS: number = 20;
 const MAX_UNKNOWN: number = 5;
+/** APPROVED gets no label: it is all a project without review ever sees. */
+const STATUS_LABEL: Partial<Record<TranslationStatus, string>> = { DRAFT: 'draft', NEEDS_REVIEW: 'needs review' };
 
 export interface PushSummary {
   dryRun: boolean;
@@ -15,6 +17,7 @@ export interface PushSummary {
   orphans: number;
   publishedOrphans: number;
   pruned: number;
+  staleReset: number;
 }
 
 /** Totals across locales, for `--json`. */
@@ -29,6 +32,7 @@ export function summarizePush(res: PushResponse): PushSummary {
     orphans: res.orphans.length,
     publishedOrphans: res.orphans.filter((orphan) => orphan.published).length,
     pruned: res.pruned,
+    staleReset: res.staleReset ?? 0,
   };
   for (const counts of Object.values(res.locales)) {
     summary.created += counts.created;
@@ -49,6 +53,8 @@ export function renderPush(res: PushResponse, view: { prune?: boolean } = {}): s
       `  ${pc.bold(locale.padEnd(8))} ${pc.green(`${c.created} created`)}, ${pc.cyan(`${c.updated} updated`)}, ` +
       pc.dim(`${c.unchanged} unchanged`);
     if (c.skippedFilled > 0) line += pc.dim(`, ${c.skippedFilled} kept (already translated; --overwrite-targets replaces them)`);
+    const label: string | undefined = c.status === undefined ? undefined : STATUS_LABEL[c.status];
+    if (label !== undefined && c.created + c.updated > 0) line += pc.magenta(` · ${label}`);
     lines.push(line);
     if (c.unknownKeys.length > 0) {
       const more: string = c.unknownKeys.length > MAX_UNKNOWN ? ', …' : '';
@@ -56,6 +62,15 @@ export function renderPush(res: PushResponse, view: { prune?: boolean } = {}): s
         pc.yellow(`           ${c.unknownKeys.length} unknown key(s) skipped: ${c.unknownKeys.slice(0, MAX_UNKNOWN).join(', ')}${more}`),
       );
     }
+  }
+
+  const stale: number = res.staleReset ?? 0;
+  if (stale > 0) {
+    lines.push(
+      pc.yellow(
+        `${stale} approved translation(s) ${res.dryRun ? 'would go' : 'went'} back to review because their source text changed.`,
+      ),
+    );
   }
 
   // `pruned` is what a dry run would delete or a real push did delete: unpublished orphans only.

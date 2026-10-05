@@ -130,8 +130,9 @@ flutter gen-l10n
 
 Options:
 
-- `push`: `--dry-run`, `--overwrite-targets`, `--prune`, `-y/--yes`, `--namespace <ns>`
-- `pull` and `status`: `--from <working|env:slug>`, `--locale <locale>` (as named on disk), `--namespace <ns>`
+- `push`: `--dry-run`, `--overwrite-targets`, `--prune`, `-y/--yes`, `--namespace <ns>`, `--status <draft|needs-review|approved>`
+- `pull` and `status`: `--from <working|env:slug>`, `--locale <locale>` (as named on disk), `--namespace <ns>`, `--only-approved`
+- `publish`: `--fail-on-withheld`
 - `--json` on `push`, `pull`, `status` and `publish`: machine-readable output on stdout
 - `--debug` (global): print error details and stack traces
 
@@ -145,6 +146,15 @@ Options:
 - `--prune` deletes keys that no longer exist in your source files, together with their translations. Keys that are published to an environment are never deleted: they are listed as kept, and you unpublish them in Translify first. `--prune` deletes exactly the keys you confirmed: the real push sends a digest of the dry run's list, and if anything changed since (keys added, removed or published) the server refuses and you re-run `translify push --prune` to review the new list. A server too old to return that digest makes `--prune` refuse.
 - `--yes` skips the confirmation prompt for the two destructive flags. Without a terminal and without `--yes`, a destructive push is refused and nothing changes.
 - `--dry-run` shows the effect of any combination and writes nothing.
+
+## Review
+
+When the project has **Require review** turned on in Translify:
+
+- `push` lands target-locale translations it writes as **needs review**. `--status draft` or `--status needs-review` picks the status explicitly, and `--status approved` approves them as they land. The source file is always approved. Each locale row shows the status its cells landed in, and the output counts approved translations that went back to review because this push changed their source text.
+- Without review, `push` approves everything it writes, and `--status draft` / `--status needs-review` are refused (`REVIEW_DISABLED`).
+- `publish` to an environment with **Publish approved text only** ships the last approved text of each translation. The output adds how many translations were **carried over** (the approved text went out instead of a newer, unapproved edit) and how many were **withheld** (never approved, so left out). Publishing still succeeds; `--fail-on-withheld` exits 5 when anything was withheld, for pipelines that must ship everything reviewed.
+- `pull --only-approved` writes the approved text from the working copy and leaves out translations that were never approved, for building a release bundle without publishing. `status --only-approved` compares against the same. It works with `--from working` only: environments already apply the gate.
 
 ## CI (GitHub Actions)
 
@@ -206,6 +216,7 @@ Pull and publish on deploy:
 | 2 | Key problem: invalid, revoked, wrong kind of key, or a missing scope |
 | 3 | Plan quota exceeded |
 | 4 | Network failure, server error, push too large, CLI too old, transaction conflict, or rate limited after 3 retries |
+| 5 | `publish --fail-on-withheld`: the publish went through, but the review gate withheld some translations |
 
 The server's error `code` decides the exit code first; the HTTP status is only used for codes the CLI does not know.
 
@@ -230,6 +241,8 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `PUSH_TOO_LARGE` | 4 | Split the push by namespace: `translify push --namespace <ns>`. |
 | `CLI_TOO_OLD` | 4 | Upgrade: `npm i -g @chesterbrains/translify-cli@latest` (or use `npx translify@latest`). |
 | `ORPHANS_CHANGED` | 1 | The orphan list changed between the dry run and the real push (keys were added, removed or published). Nothing was written; run `translify push --prune` again to review the new list. |
+| `REVIEW_DISABLED` | 1 | `push --status draft` or `--status needs-review` on a project without review. Turn on **Require review** in the project settings, or drop `--status`. Nothing was written. |
+| `APPROVED_ONLY_REQUIRES_WORKING` | 1 | `--only-approved` was combined with `--from env:<slug>`. Pull an environment without it; it already holds only what its gate allowed. |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |

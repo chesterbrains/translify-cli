@@ -16,7 +16,19 @@ export interface PushOptions {
   yes?: boolean;
   namespace?: string;
   json?: boolean;
+  /** Status target cells land in. Omitted → the server decides from the project's review setting. */
+  status?: PushStatusFlag;
 }
+
+export const PUSH_STATUSES = ['draft', 'needs-review', 'approved'] as const;
+export type PushStatusFlag = (typeof PUSH_STATUSES)[number];
+export type TranslationStatus = 'DRAFT' | 'NEEDS_REVIEW' | 'APPROVED';
+
+const WIRE_STATUS: Record<PushStatusFlag, TranslationStatus> = {
+  draft: 'DRAFT',
+  'needs-review': 'NEEDS_REVIEW',
+  approved: 'APPROVED',
+};
 
 export interface LocaleCounts {
   created: number;
@@ -24,6 +36,8 @@ export interface LocaleCounts {
   unchanged: number;
   skippedFilled: number;
   unknownKeys: string[];
+  /** Status the cells written for this locale landed in. Absent on an older server. */
+  status?: TranslationStatus;
 }
 
 /** The BE's push response; the same shape for a dry run and a real push. */
@@ -32,6 +46,8 @@ export interface PushResponse {
   locales: Record<string, LocaleCounts>;
   orphans: Array<{ namespace: string; key: string; published: boolean }>;
   pruned: number;
+  /** Approved targets demoted to needs-review because this push changed their source. Absent on an older server. */
+  staleReset?: number;
   /** Hex SHA-256 of the deletable (unpublished) orphans; a confirmed prune sends it back. Absent on an older server. */
   pruneDigest?: string;
 }
@@ -82,6 +98,8 @@ const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, prune:
   form.set('overwriteTargets', String(opts.overwriteTargets === true));
   form.set('prune', String(prune));
   if (pruneDigest !== undefined) form.set('pruneDigest', pruneDigest);
+  // No default on the wire: the server resolves an absent status from the project's review setting.
+  if (opts.status !== undefined) form.set('status', WIRE_STATUS[opts.status]);
   for (const { field, match, bytes } of uploads) form.append(field, new File([bytes], match.path));
 
   return form;

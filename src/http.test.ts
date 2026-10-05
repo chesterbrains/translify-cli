@@ -138,6 +138,22 @@ describe('Api', () => {
     expect(error.message).not.toContain('sk_abc');
   });
 
+  it('explains REVIEW_DISABLED with exit 1', async () => {
+    const error = await fail(409, { code: 'REVIEW_DISABLED', message: 'Review is not enabled for this project' });
+
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toBe(
+      'Review is off for this project, so --status draft or needs-review cannot be used. Turn on "Require review" in the project settings, or drop --status.',
+    );
+  });
+
+  it('explains APPROVED_ONLY_REQUIRES_WORKING with exit 1', async () => {
+    const error = await fail(400, { code: 'APPROVED_ONLY_REQUIRES_WORKING', message: 'approvedOnly applies to from=working only' });
+
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toBe('--only-approved works with --from working only; environments already apply the review gate.');
+  });
+
   it('renders an emptySourcePrune row readably', async () => {
     const error = await fail(422, {
       code: 'VALIDATION_FAILED',

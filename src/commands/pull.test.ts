@@ -269,4 +269,42 @@ describe('runPull', () => {
     expect((await stat(path)).mtimeMs).toBe(before.mtimeMs);
     expect(await readFile(path, 'utf8')).toContain('\r\n');
   });
+
+  it('--only-approved asks every rule for approved text', async () => {
+    const client = api();
+    await runPull({ onlyApproved: true }, { cwd: await tmp(), config, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'json', jsonStyle: 'flat', approvedOnly: 'true' });
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'arb', namespaces: 'app', approvedOnly: 'true' });
+  });
+
+  it('--only-approved also applies to status', async () => {
+    const client = api();
+    await runPull({ onlyApproved: true, check: true }, { cwd: await tmp(), config, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'json', jsonStyle: 'flat', approvedOnly: 'true' });
+  });
+
+  it('--only-approved with an env: source exits 1 before any request', async () => {
+    const client = api();
+    const pending = runPull(
+      { onlyApproved: true, from: 'env:production' },
+      { cwd: await tmp(), config, api: client as never, out: quiet },
+    );
+
+    await expect(pending).rejects.toMatchObject({ exitCode: 1, message: expect.stringMatching(/--from working only/) });
+    expect(client.get).not.toHaveBeenCalled();
+  });
+
+  it('--only-approved with an explicit --from working is allowed', async () => {
+    const client = api();
+    await runPull({ onlyApproved: true, from: 'working' }, { cwd: await tmp(), config, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', {
+      format: 'json',
+      jsonStyle: 'flat',
+      from: 'working',
+      approvedOnly: 'true',
+    });
+  });
 });

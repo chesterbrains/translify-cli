@@ -113,6 +113,48 @@ describe('renderPush', () => {
   });
 });
 
+describe('renderPush review state', () => {
+  const row = (res: PushResponse, locale: string): string =>
+    plain(res).split('\n').find((line) => line.trim().startsWith(locale))!;
+
+  it('suffixes a locale that wrote cells with the status they landed in', () => {
+    const res: PushResponse = {
+      ...base,
+      locales: { ...base.locales, fr: { ...base.locales.en!, status: 'NEEDS_REVIEW' }, de: { ...base.locales.en!, status: 'DRAFT' } },
+    };
+
+    expect(row(res, 'fr')).toMatch(/· needs review$/);
+    expect(row(res, 'de')).toMatch(/· draft$/);
+  });
+
+  it('adds no suffix for approved cells, a missing status, or a locale that wrote nothing', () => {
+    const res: PushResponse = {
+      ...base,
+      locales: {
+        en: { ...base.locales.en!, status: 'APPROVED' },
+        fr: { ...base.locales.en! },
+        de: { created: 0, updated: 0, unchanged: 9, skippedFilled: 0, unknownKeys: [], status: 'NEEDS_REVIEW' },
+      },
+    };
+
+    for (const locale of ['en', 'fr', 'de']) expect(row(res, locale)).not.toMatch(/·/);
+  });
+
+  it('reports approved targets sent back to review by a source change', () => {
+    expect(plain({ ...base, staleReset: 3 })).toContain(
+      '3 approved translation(s) went back to review because their source text changed.',
+    );
+    expect(plain({ ...base, dryRun: true, staleReset: 3 })).toContain(
+      '3 approved translation(s) would go back to review because their source text changed.',
+    );
+  });
+
+  it('says nothing about stale cells when none were reset or the server does not report it', () => {
+    expect(plain({ ...base, staleReset: 0 })).not.toMatch(/back to review/);
+    expect(plain(base)).not.toMatch(/back to review/);
+  });
+});
+
 describe('summarizePush', () => {
   it('totals across locales', () => {
     expect(
@@ -127,6 +169,11 @@ describe('summarizePush', () => {
       orphans: 1,
       publishedOrphans: 1,
       pruned: 0,
+      staleReset: 0,
     });
+  });
+
+  it('carries staleReset', () => {
+    expect(summarizePush({ ...base, staleReset: 4 }).staleReset).toBe(4);
   });
 });
