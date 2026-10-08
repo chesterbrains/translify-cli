@@ -3,6 +3,7 @@ import { confirm, input, password, select } from '@inquirer/prompts';
 import { Command, Option } from 'commander';
 
 import { runInit, type WhoamiInfo } from './commands/init.js';
+import { LINT_SEVERITIES, runLint, type LintOptions } from './commands/lint.js';
 import { runLogin } from './commands/login.js';
 import { runPublish } from './commands/publish.js';
 import { runPull, type PullOptions } from './commands/pull.js';
@@ -153,6 +154,20 @@ program
   .option('--json', 'machine-readable output')
   .action(async (opts: PullOptions) => {
     process.exitCode = await runPull({ ...opts, check: true }, { ...(await withApi()), out });
+  });
+
+program
+  .command('lint')
+  .description('Exit 6 if translations have placeholder errors (CI check)')
+  .option('--namespace <ns>', 'only this namespace')
+  .option('--locale <locale>', 'only this locale (as named on disk)')
+  .addOption(
+    new Option('--severity <severity>', 'only list issues of this severity; counts and the exit code are unaffected').choices(LINT_SEVERITIES),
+  )
+  .option('--max-warnings <n>', 'also exit 6 when there are more than n warnings')
+  .option('--json', 'machine-readable output')
+  .action(async (opts: LintOptions) => {
+    process.exitCode = await runLint(opts, { ...(await withApi()), out });
   });
 
 try {

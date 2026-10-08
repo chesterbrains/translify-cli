@@ -126,6 +126,7 @@ flutter gen-l10n
 | `translify push` | Upload source and target files |
 | `translify pull` | Download translation files |
 | `translify status` | Exit 1 if local files differ from Translify |
+| `translify lint` | Exit 6 if translations have placeholder errors |
 | `translify publish <env>` | Publish an environment, e.g. `production` |
 
 Options:
@@ -133,7 +134,8 @@ Options:
 - `push`: `--dry-run`, `--overwrite-targets`, `--prune`, `-y/--yes`, `--namespace <ns>`, `--status <draft|needs-review|approved>`
 - `pull` and `status`: `--from <working|env:slug>`, `--locale <locale>` (as named on disk), `--namespace <ns>`, `--only-approved`
 - `publish`: `--fail-on-withheld`
-- `--json` on `push`, `pull`, `status` and `publish`: machine-readable output on stdout
+- `lint`: `--namespace <ns>`, `--locale <locale>` (as named on disk), `--severity <error|warning>` (filters the list, not the counts or exit code), `--max-warnings <n>`
+- `--json` on `push`, `pull`, `status`, `publish` and `lint`: machine-readable output on stdout
 - `--debug` (global): print error details and stack traces
 
 ## Conflict rules
@@ -196,6 +198,17 @@ jobs:
           TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
 ```
 
+Fail a pull request when a translation breaks a placeholder:
+
+```yaml
+- run: npx translify lint --max-warnings 0
+  env:
+    TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
+```
+
+`lint` checks what this repository pulls: only the namespaces of fixed-`namespace` rules, or the whole
+project when a rule uses `{namespace}`. It needs a key with the `pull` scope.
+
 Pull and publish on deploy:
 
 ```yaml
@@ -217,6 +230,7 @@ Pull and publish on deploy:
 | 3 | Plan quota exceeded |
 | 4 | Network failure, server error, push too large, CLI too old, transaction conflict, or rate limited after 3 retries |
 | 5 | `publish --fail-on-withheld`: the publish went through, but the review gate withheld some translations |
+| 6 | `lint` found placeholder errors, or more warnings than `--max-warnings` |
 
 The server's error `code` decides the exit code first; the HTTP status is only used for codes the CLI does not know.
 
