@@ -126,7 +126,7 @@ flutter gen-l10n
 | `translify push` | Upload source and target files |
 | `translify pull` | Download translation files |
 | `translify status` | Exit 1 if local files differ from Translify |
-| `translify lint` | Exit 6 if translations have placeholder errors |
+| `translify lint` | Exit 6 if translations in Translify have placeholder errors (or too many warnings) |
 | `translify publish <env>` | Publish an environment, e.g. `production` |
 
 Options:
@@ -134,7 +134,7 @@ Options:
 - `push`: `--dry-run`, `--overwrite-targets`, `--prune`, `-y/--yes`, `--namespace <ns>`, `--status <draft|needs-review|approved>`
 - `pull` and `status`: `--from <working|env:slug>`, `--locale <locale>` (as named on disk), `--namespace <ns>`, `--only-approved`
 - `publish`: `--fail-on-withheld`
-- `lint`: `--namespace <ns>`, `--locale <locale>` (as named on disk), `--severity <error|warning>` (filters the list, not the counts or exit code), `--max-warnings <n>`
+- `lint`: `--namespace <ns>`, `--locale <locale>` (as named on disk), `--severity <error|warning>` (only list cells whose worst issue is this severity; counts and the exit code are unaffected), `--max-warnings <n>`
 - `--json` on `push`, `pull`, `status`, `publish` and `lint`: machine-readable output on stdout
 - `--debug` (global): print error details and stack traces
 
@@ -198,7 +198,7 @@ jobs:
           TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
 ```
 
-Fail a pull request when a translation breaks a placeholder:
+Fail CI when translations in Translify have placeholder errors:
 
 ```yaml
 - run: npx translify lint --max-warnings 0
@@ -206,12 +206,16 @@ Fail a pull request when a translation breaks a placeholder:
     TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
 ```
 
-`lint` checks what this repository pulls: only the namespaces of fixed-`namespace` rules, or the whole
+`lint` checks what is stored in Translify, not your local files; run it after `push`, or before `pull`/`publish` on deploy.
+It covers what this repository pulls: only the namespaces of fixed-`namespace` rules, or the whole
 project when a rule uses `{namespace}`. It needs a key with the `pull` scope.
 
 Pull and publish on deploy:
 
 ```yaml
+- run: npx translify lint
+  env:
+    TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
 - run: npx translify pull
   env:
     TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
