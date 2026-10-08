@@ -2,7 +2,9 @@ import { stripVTControlCharacters } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 import type { PushResponse } from './commands/push.js';
-import { renderPush, summarizePush } from './render.js';
+import type { LintCell, LintResponse } from './commands/lint.js';
+import type { Config } from './config.js';
+import { renderPush, summarizePush, renderLint } from './render.js';
 
 const plain = (res: PushResponse): string => stripVTControlCharacters(renderPush(res));
 
@@ -175,5 +177,132 @@ describe('summarizePush', () => {
 
   it('carries staleReset', () => {
     expect(summarizePush({ ...base, staleReset: 4 }).staleReset).toBe(4);
+  });
+});
+
+describe('renderLint', () => {
+  const config = { apiUrl: 'http://x', files: [], locales: { it_IT: 'it' } } as unknown as Config;
+  const cell = (over: Partial<LintCell>): LintCell => ({
+    namespace: 'shop',
+    key: 'cart.items',
+    locale: 'it',
+    severity: 'ERROR',
+    value: 'articoli',
+    issues: [{ code: 'PLACEHOLDER_MISSING', severity: 'ERROR', arg: 'count' }],
+    ...over,
+  });
+  const res = (over: Partial<LintResponse>): LintResponse => ({
+    summary: { errors: 0, warnings: 0, locales: [] },
+    cells: [],
+    truncated: false,
+    ...over,
+  });
+  const text = (r: LintResponse, view?: { severity?: 'error' | 'warning' }): string =>
+    stripVTControlCharacters(renderLint(r, config, view));
+
+  it('groups by namespace and key, prints the disk locale, and totals per locale', () => {
+    const out: string = text(
+      res({
+        summary: {
+          errors: 2,
+          warnings: 1,
+          locales: [
+            { locale: 'en', errors: 0, warnings: 0 },
+            { locale: 'it', errors: 2, warnings: 0 },
+            { locale: 'pl', errors: 0, warnings: 1 },
+          ],
+        },
+        cells: [
+          cell({ namespace: 'admin', key: 'panel.greeting', issues: [{ code: 'PLACEHOLDER_MISSING', severity: 'ERROR', arg: 'name' }] }),
+          cell({
+            key: 'cart.files',
+            locale: 'pl',
+            severity: 'WARNING',
+            issues: [{ code: 'PLURAL_CATEGORY_MISSING', severity: 'WARNING', arg: 'n', categories: ['few', 'many'] }],
+          }),
+          cell({}),
+        ],
+      }),
+    );
+
+    expect(out.split('\n')).toEqual([
+      'admin',
+      '  panel.greeting',
+      '    it_IT    error    missing placeholder {name}',
+      'shop',
+      '  cart.files',
+      '    pl       warning  plural {n} is missing few, many',
+      '  cart.items',
+      '    it_IT    error    missing placeholder {count}',
+      '',
+      '✖ 2 errors, 1 warning — it_IT 2/0 · pl 0/1',
+    ]);
+  });
+
+  it('words every known issue code', () => {
+    const issues = [
+      { code: 'PLACEHOLDER_EXTRA', severity: 'ERROR', arg: 'total' },
+      { code: 'PLACEHOLDER_KIND_MISMATCH', severity: 'WARNING', arg: 'd' },
+      { code: 'PLURAL_CATEGORY_UNKNOWN', severity: 'WARNING', arg: 'n', categories: ['few'] },
+    ] as const;
+    const out: string = text(res({ summary: { errors: 1, warnings: 0, locales: [] }, cells: [cell({ issues: [...issues] })] }));
+
+    expect(out).toContain('unexpected placeholder {total}');
+    expect(out).toContain('placeholder {d} is used differently than in the source');
+    expect(out).toContain('plural {n} has categories this locale does not use: few');
+  });
+
+  it('shows the value under ICU_INVALID only, quoted and cut to 80 characters', () => {
+    const long: string = `Total {amount, number ${'x'.repeat(100)}`;
+    const out: string = text(
+      res({
+        summary: { errors: 1, warnings: 0, locales: [] },
+        cells: [
+          cell({
+            value: long,
+            issues: [{ code: 'ICU_INVALID', severity: 'ERROR', message: 'EXPECT_ARGUMENT_CLOSING_BRACE', offset: 14 }],
+          }),
+        ],
+      }),
+    );
+    const lines: string[] = out.split('\n');
+
+    expect(lines[2]).toBe('    it_IT    error    invalid ICU: EXPECT_ARGUMENT_CLOSING_BRACE at 14');
+    expect(lines[3]).toBe(`                      ${JSON.stringify(`${long.slice(0, 79)}…`)}`);
+    expect(text(res({ summary: { errors: 1, warnings: 0, locales: [] }, cells: [cell({})] }))).not.toContain('"articoli"');
+  });
+
+  it('prints an unknown issue code as-is', () => {
+    const out: string = text(
+      res({ summary: { errors: 1, warnings: 0, locales: [] }, cells: [cell({ issues: [{ code: 'SOMETHING_NEW', severity: 'ERROR' }] })] }),
+    );
+
+    expect(out).toContain('    it_IT    error    SOMETHING_NEW');
+  });
+
+  it('says a clean project is clean, counting locales', () => {
+    expect(text(res({ summary: { errors: 0, warnings: 0, locales: [{ locale: 'en', errors: 0, warnings: 0 }] } }))).toBe(
+      '✔ No issues in 1 locale(s).',
+    );
+    expect(text(res({}))).toBe('✔ No issues in 0 locale(s).');
+  });
+
+  it('marks a warnings-only result with ⚠ and still states the counts when no rows are listed', () => {
+    const out: string = text(
+      res({ summary: { errors: 0, warnings: 2, locales: [{ locale: 'pl', errors: 0, warnings: 2 }] } }),
+      { severity: 'error' },
+    );
+
+    expect(out).toBe('⚠ 0 errors, 2 warnings — pl 0/2');
+  });
+
+  it('adds a truncation line counting the cells the filter matched', () => {
+    const summary = { errors: 1500, warnings: 300, locales: [{ locale: 'it', errors: 1500, warnings: 300 }] };
+    const cells: LintCell[] = Array.from({ length: 1000 }, (_, index) => cell({ key: `k${index}` }));
+
+    expect(text(res({ summary, cells, truncated: true }))).toContain(
+      'Showing first 1000 of 1800 cells. Narrow with --namespace / --locale, or use --json.',
+    );
+    expect(text(res({ summary, cells, truncated: true }), { severity: 'error' })).toContain('Showing first 1000 of 1500 cells.');
   });
 });
