@@ -133,7 +133,7 @@ Options:
 
 - `push`: `--dry-run`, `--overwrite-targets`, `--prune`, `-y/--yes`, `--namespace <ns>`, `--status <draft|needs-review|approved>`
 - `pull` and `status`: `--from <working|env:slug>`, `--locale <locale>` (as named on disk), `--namespace <ns>`, `--only-approved`
-- `publish`: `--fail-on-withheld`
+- `publish`: `--fail-on-withheld`, `--allow-errors`
 - `lint`: `--namespace <ns>`, `--locale <locale>` (as named on disk), `--severity <error|warning>` (only list cells whose worst issue is this severity; counts and the exit code are unaffected), `--max-warnings <n>`
 - `--json` on `push`, `pull`, `status`, `publish` and `lint`: machine-readable output on stdout
 - `--debug` (global): print error details and stack traces
@@ -156,6 +156,7 @@ When the project has **Require review** turned on in Translify:
 - `push` lands target-locale translations it writes as **needs review**. `--status draft` or `--status needs-review` picks the status explicitly, and `--status approved` approves them as they land. The source file is always approved. Each locale row shows the status its cells landed in, and the output counts approved translations that went back to review because this push changed their source text.
 - Without review, `push` approves everything it writes, and `--status draft` / `--status needs-review` are refused (`REVIEW_DISABLED`).
 - `publish` to an environment with **Publish approved text only** ships the last approved text of each translation. The output adds how many translations were **carried over** (the approved text went out instead of a newer, unapproved edit) and how many were **withheld** (never approved, so left out). Publishing still succeeds; `--fail-on-withheld` exits 5 when anything was withheld, for pipelines that must ship everything reviewed.
+- `publish` refuses when a translation that would go live has a placeholder error (a missing or extra placeholder, invalid ICU, a printf type mismatch). Nothing is published, the refused translations are listed like `lint` lists them, and the command exits 6. Warnings never block. On an environment with **Publish approved text only**, only approved translations count: one carried over from its last approved text never blocks. `--allow-errors` publishes anyway and reports how many went out with errors; the publish is recorded in the activity log with the override.
 - `pull --only-approved` writes the approved text from the working copy and leaves out translations that were never approved, for building a release bundle without publishing. `status --only-approved` compares against the same. It works with `--from working` only: environments already apply the gate.
 
 ## CI (GitHub Actions)
@@ -234,7 +235,7 @@ Pull and publish on deploy:
 | 3 | Plan quota exceeded |
 | 4 | Network failure, server error, push too large, CLI too old, transaction conflict, or rate limited after 3 retries |
 | 5 | `publish --fail-on-withheld`: the publish went through, but the review gate withheld some translations |
-| 6 | `lint` found placeholder errors, or more warnings than `--max-warnings` |
+| 6 | Placeholder errors: `lint` found them (or more warnings than `--max-warnings`), or `publish` refused because translations with errors would go live |
 
 The server's error `code` decides the exit code first; the HTTP status is only used for codes the CLI does not know.
 
