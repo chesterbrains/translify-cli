@@ -1,7 +1,7 @@
 import pc from 'picocolors';
 
 import type { PushResponse, TranslationStatus } from './commands/push.js';
-import type { LintIssue, LintResponse } from './commands/lint.js';
+import type { LintCell, LintIssue, LintResponse } from './commands/lint.js';
 import type { Config } from './config.js';
 import { toFsLocale } from './patterns.js';
 
@@ -138,18 +138,18 @@ const issueText = (issue: LintIssue): string => {
 
 const cut = (value: string): string => (value.length > MAX_VALUE ? `${value.slice(0, MAX_VALUE - 1)}…` : value);
 
+/** A cell with issues as lint reports it, or as a refused publish names it (no `value` there). */
+export type IssueCell = Pick<LintCell, 'namespace' | 'key' | 'locale' | 'issues'> & { value?: string };
+
 /**
  * ESLint-style: namespace, then key, then one line per issue with the locale as named on disk.
  * Rows arrive sorted by the server; only the grouping headers are added here.
  */
-export function renderLint(res: LintResponse, config: Config, view: { severity?: 'error' | 'warning' } = {}): string {
-  const { errors, warnings } = res.summary;
-  if (errors + warnings === 0) return pc.green(`✔ No issues in ${res.summary.locales.length} locale(s).`);
-
+export function renderIssueCells(cells: IssueCell[], config: Config | undefined): string[] {
   const lines: string[] = [];
   let namespace: string | undefined;
   let key: string | undefined;
-  for (const cell of res.cells) {
+  for (const cell of cells) {
     if (cell.namespace !== namespace) {
       namespace = cell.namespace;
       key = undefined;
@@ -159,13 +159,24 @@ export function renderLint(res: LintResponse, config: Config, view: { severity?:
       key = cell.key;
       lines.push(`  ${key}`);
     }
-    const locale: string = toFsLocale(cell.locale, config).padEnd(8);
+    const locale: string = (config === undefined ? cell.locale : toFsLocale(cell.locale, config)).padEnd(8);
     for (const issue of cell.issues) {
       const label: string = issue.severity === 'ERROR' ? pc.red('error'.padEnd(8)) : pc.yellow('warning'.padEnd(8));
       lines.push(`    ${locale} ${label} ${issueText(issue)}`);
-      if (issue.code === 'ICU_INVALID') lines.push(`${VALUE_INDENT}${pc.dim(JSON.stringify(cut(cell.value)))}`);
+      if (issue.code === 'ICU_INVALID' && cell.value !== undefined) {
+        lines.push(`${VALUE_INDENT}${pc.dim(JSON.stringify(cut(cell.value)))}`);
+      }
     }
   }
+
+  return lines;
+}
+
+export function renderLint(res: LintResponse, config: Config, view: { severity?: 'error' | 'warning' } = {}): string {
+  const { errors, warnings } = res.summary;
+  if (errors + warnings === 0) return pc.green(`✔ No issues in ${res.summary.locales.length} locale(s).`);
+
+  const lines: string[] = renderIssueCells(res.cells, config);
 
   if (res.truncated) {
     const matched: number = view.severity === 'error' ? errors : view.severity === 'warning' ? warnings : errors + warnings;

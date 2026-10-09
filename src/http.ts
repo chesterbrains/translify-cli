@@ -41,6 +41,7 @@ const CODE_EXIT: Record<string, ExitCode> = {
   RATE_LIMITED: EXIT.network,
   REVIEW_DISABLED: EXIT.failed,
   APPROVED_ONLY_REQUIRES_WORKING: EXIT.failed,
+  INVALID_CELLS: EXIT.issues,
 };
 
 const exitFor = (status: number, code: string | undefined): ExitCode => {
@@ -101,6 +102,8 @@ const describeBody = (status: number, body: ErrorBody): string => {
       return 'Review is off for this project, so --status draft or needs-review cannot be used. Turn on "Require review" in the project settings, or drop --status.';
     case 'APPROVED_ONLY_REQUIRES_WORKING':
       return ONLY_APPROVED_NEEDS_WORKING;
+    case 'INVALID_CELLS':
+      return `Publish refused: ${String(body.total)} translation(s) with placeholder errors would go live. Nothing was published.`;
     case 'TRANSACTION_CONFLICT':
       return 'The server hit a transaction conflict. Try again.';
     case 'RATE_LIMITED':

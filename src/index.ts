@@ -122,13 +122,17 @@ program
   .command('publish <environment>')
   .description('Publish an environment')
   .option('--fail-on-withheld', 'exit 5 when the review gate withheld any translation (the publish still happens)')
+  .option('--allow-errors', 'publish even when translations with placeholder errors would go live (otherwise refused, exit 6)')
   .option('--json', 'machine-readable output')
-  .action(async (environment: string, opts: { json?: boolean; failOnWithheld?: boolean }) => {
+  .action(async (environment: string, opts: { json?: boolean; failOnWithheld?: boolean; allowErrors?: boolean }) => {
+    const { api, config } = await withApi();
     process.exitCode = await runPublish(environment, {
-      api: (await withApi()).api,
+      api,
+      config,
       out,
       json: opts.json,
       failOnWithheld: opts.failOnWithheld,
+      allowErrors: opts.allowErrors,
     });
   });
 
