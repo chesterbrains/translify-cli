@@ -77,9 +77,7 @@ npx translify pull
 }
 ```
 
-- `pattern` must contain `{locale}`. `{namespace}` is optional; without it, set a fixed `"namespace"` on the rule.
-- `format` is `json`, `xliff` or `arb`. JSON also takes `"jsonStyle": "nested"` (default) or `"flat"`.
-- `locales` maps a locale name on disk to the Translify locale code, for example `{ "en_US": "en-US" }`. Omit it when the names already match.
+Every field is described in the [`translify.json` reference](#translifyjson-reference).
 
 ## Quickstart: Flutter
 
@@ -117,6 +115,26 @@ flutter gen-l10n
 
 `"@@locale"` is optional in ARB files: when it is absent, the file's locale is used. When it is present it must match the file's locale (case and `_`/`-` are ignored). On `pull`, the CLI writes `@@locale` using the locale name on disk (for example `en_US` in `app_en_US.arb`), as `flutter gen-l10n` expects.
 
+## `translify.json` reference
+
+`translify.json` lives in the repository root; every command reads it from the current directory. The
+[JSON schema](schema/translify.schema.json) gives editors completion and validation through `$schema`. Unknown
+fields are refused, and so is any field whose name contains `key`, `secret` or `token`: keys never go in this file.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `$schema` | string | no | Schema URL for editor support. Ignored by the CLI. |
+| `apiUrl` | URL | yes | The Translify API base, ending in `/api`, e.g. `https://translify.tommasofeltrin.work/api`. |
+| `files` | array | yes | One rule per kind of translation file. Each rule has the fields below. |
+| `files[].pattern` | string | yes | Path relative to `translify.json`, with `/` separators. Must contain `{locale}` once and may contain `{namespace}` once, e.g. `locales/{locale}/{namespace}.json`. |
+| `files[].format` | `json` \| `xliff` \| `arb` | yes | File format: i18next JSON, XLIFF or Flutter ARB. |
+| `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
+| `files[].jsonStyle` | `nested` \| `flat` | no | Only for `json`. `nested` (the default) writes `{ "a": { "b": "…" } }`, `flat` writes `{ "a.b": "…" }`. |
+| `locales` | object | no | Maps a locale name on disk to a Translify locale code, e.g. `{ "en_US": "en-US" }`. Unmapped names pass through unchanged. Two names may not map to the same code, and a target may not itself be a mapped name. |
+
+Each file must be matched by one rule only, and each (locale, namespace) pair must come from one file only;
+otherwise the CLI stops before sending anything and names the files involved.
+
 ## Commands
 
 | Command | What it does |
@@ -145,9 +163,43 @@ Options:
 - **Source locale: your files win.** Existing source translations are overwritten with what is in the file.
 - **Target locales: Translify fills only the gaps.** Keys that already have a translation are left alone and counted as skipped.
 - `--overwrite-targets` also overwrites existing target translations.
-- `--prune` deletes keys that no longer exist in your source files, together with their translations. Keys that are published to an environment are never deleted: they are listed as kept, and you unpublish them in Translify first. `--prune` deletes exactly the keys you confirmed: the real push sends a digest of the dry run's list, and if anything changed since (keys added, removed or published) the server refuses and you re-run `translify push --prune` to review the new list. A server too old to return that digest makes `--prune` refuse.
+- `--prune` deletes keys that no longer exist in your source files, together with their translations. See [Prune safety](#prune-safety).
 - `--yes` skips the confirmation prompt for the two destructive flags. Without a terminal and without `--yes`, a destructive push is refused and nothing changes.
 - `--dry-run` shows the effect of any combination and writes nothing.
+
+## Prune safety
+
+`translify push --prune` is the only command that deletes keys. What it deletes, and what stops it:
+
+- **Only the namespaces in this push.** A key is an orphan when its namespace is in the push and its source file no
+  longer has it. Namespaces you did not push (another rule, another repository, `--namespace` left them out) are never
+  touched.
+- **Never published keys.** A key published to any environment is listed as kept and survives. Unpublish it in
+  Translify first if it really should go.
+- **Never a whole namespace by accident.** If a source file in the push has no entries, the push is refused
+  (`VALIDATION_FAILED` with `emptySourcePrune`) instead of deleting every key in that namespace. Emptying a namespace
+  is done in the Translify web app.
+- **Exactly the list you confirmed.** The CLI always runs a dry run first, shows the keys it would delete and asks
+  for confirmation. The real push sends a digest of that list; if the server's list differs by then (keys added,
+  removed or published in between), it refuses with `ORPHANS_CHANGED` and writes nothing. A server too old to return
+  the digest makes `--prune` refuse.
+- **No silent prune in CI.** Without a terminal, `--prune` is refused unless you pass `--yes`.
+- **Atomic.** The whole push, deletions included, is one transaction: if anything fails, nothing is written.
+
+`--yes` confirms whatever that run's dry run lists, so in CI review the list before it runs unattended. One way:
+show the orphans on pull requests and prune on `main`.
+
+```yaml
+# on pull_request: list what a prune would delete, change nothing
+- run: npx translify push --prune --dry-run
+  env:
+    TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
+
+# on push to main: prune for real
+- run: npx translify push --prune --yes
+  env:
+    TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
+```
 
 ## Review
 
@@ -262,6 +314,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `ORPHANS_CHANGED` | 1 | The orphan list changed between the dry run and the real push (keys were added, removed or published). Nothing was written; run `translify push --prune` again to review the new list. |
 | `REVIEW_DISABLED` | 1 | `push --status draft` or `--status needs-review` on a project without review. Turn on **Require review** in the project settings, or drop `--status`. Nothing was written. |
 | `APPROVED_ONLY_REQUIRES_WORKING` | 1 | `--only-approved` was combined with `--from env:<slug>`. Pull an environment without it; it already holds only what its gate allowed. |
+| `INVALID_CELLS` | 6 | `publish` refused: translations that would go live have placeholder errors. Nothing was published; the output lists them like `lint` does. Fix them in Translify, or re-run with `--allow-errors` to publish anyway (recorded in the activity log). |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |
