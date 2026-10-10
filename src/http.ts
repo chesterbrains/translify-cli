@@ -17,7 +17,7 @@ const UPGRADE: string =
 const sleep = async (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Exit code by the body's `code` first; the status only decides for a code we do not know. */
-const CODE_EXIT: Record<string, ExitCode> = {
+export const CODE_EXIT: Record<string, ExitCode> = {
   VALIDATION_FAILED: EXIT.failed,
   LOCALE_NOT_FOUND: EXIT.failed,
   NAMESPACE_NOT_FOUND: EXIT.failed,
