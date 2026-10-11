@@ -142,7 +142,7 @@ What `push` reads from `ng extract-i18n --format=xlf2` output:
 | Angular | Translify argument |
 |---|---|
 | `<ph equiv="INTERPOLATION" disp="{{ name }}"/>` | `{name}` |
-| `disp="{{ count() }}"`, `disp="{{ user.name }}"` | the head identifier: `{count}`, `{user}` |
+| `disp="{{ count() }}"`, `disp="{{ user.name }}"`, `disp="{{ price | currency }}"` | the head identifier: `{count}`, `{user}`, `{price}` (also through `!.` and `[…]`); two that collide become `{user}` and `{user_2}` |
 | no usable `disp` | `{p0}`, `{p1}`, … from the `equiv` number |
 | `VAR_PLURAL` / `VAR_SELECT` | named after the first interpolation inside its branches, else `count` / `value` |
 
