@@ -196,7 +196,7 @@ pull. Device variations (`|==|device.*`), unknown unit kinds and legacy `.string
 
 Not supported in this version (the pull is refused with `XLIFF_DIALECT_UNSUPPORTED`): `select` and `selectordinal`, exact
 matches (`=0`) and `offset`, two plurals in one message, nested plurals, number formats without a known printf type (e.g.
-currency), a quoted `'{'`, a translation whose shape differs from the source (plain text for a plural), and keys whose
+currency), a translation whose shape differs from the source (plain text for a plural), and keys whose
 placeholders are printf or i18next rather than ICU. A complete example is `examples/ios-xcstrings` in
 [translify-examples](https://github.com/chesterbrains/translify-examples).
 
