@@ -172,6 +172,46 @@ export function renderIssueCells(cells: IssueCell[], config: Config | undefined)
   return lines;
 }
 
+/** A cell a refused pull names: why it cannot be written in the requested XLIFF dialect. */
+export interface ReasonCell {
+  namespace: string;
+  key: string;
+  locale: string;
+  reason: string;
+}
+
+const REASON_TEXT: Record<string, string> = {
+  mixedIcu: 'text next to a plural or select (Angular needs the whole message to be the ICU)',
+  multipleIcu: 'more than one plural or select in one message',
+  nestedIcu: 'a plural or select inside another one',
+  ordinal: 'selectordinal has no Angular equivalent',
+  invalidIcu: 'does not parse as ICU',
+  formattedArg: 'a number, date or time format has no Angular placeholder',
+  syntax: 'the key uses printf or i18next placeholders, not ICU',
+};
+
+/** Like renderIssueCells: namespace, key, then one line per cell with the locale as named on disk. */
+export function renderReasonCells(cells: ReasonCell[], config: Config | undefined): string[] {
+  const lines: string[] = [];
+  let namespace: string | undefined;
+  let key: string | undefined;
+  for (const cell of cells) {
+    if (cell.namespace !== namespace) {
+      namespace = cell.namespace;
+      key = undefined;
+      lines.push(pc.bold(namespace));
+    }
+    if (cell.key !== key) {
+      key = cell.key;
+      lines.push(`  ${key}`);
+    }
+    const locale: string = (config === undefined ? cell.locale : toFsLocale(cell.locale, config)).padEnd(8);
+    lines.push(`    ${locale} ${pc.red('error'.padEnd(8))} ${REASON_TEXT[cell.reason] ?? cell.reason}`);
+  }
+
+  return lines;
+}
+
 export function renderLint(res: LintResponse, config: Config, view: { severity?: 'error' | 'warning' } = {}): string {
   const { errors, warnings } = res.summary;
   if (errors + warnings === 0) return pc.green(`✔ No issues in ${res.summary.locales.length} locale(s).`);

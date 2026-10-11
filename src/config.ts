@@ -20,6 +20,7 @@ const fileRule = z
     format: z.enum(['json', 'xliff', 'arb']),
     namespace: z.string().regex(NAMESPACE, 'must be lowercase kebab-case').max(64).optional(),
     jsonStyle: z.enum(['nested', 'flat']).optional(),
+    xliffDialect: z.enum(['angular']).optional(),
   })
   .strict()
   .superRefine((rule, ctx) => {
@@ -31,6 +32,9 @@ const fileRule = z
     }
     if (rule.jsonStyle !== undefined && rule.format !== 'json') {
       ctx.addIssue({ code: 'custom', path: ['jsonStyle'], message: 'only applies to format "json"' });
+    }
+    if (rule.xliffDialect !== undefined && rule.format !== 'xliff') {
+      ctx.addIssue({ code: 'custom', path: ['xliffDialect'], message: 'only applies to format "xliff"' });
     }
   })
   .transform((rule) => (rule.format === 'json' ? { ...rule, jsonStyle: rule.jsonStyle ?? 'nested' } : rule));

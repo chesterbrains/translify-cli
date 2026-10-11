@@ -28,7 +28,11 @@
             "maxLength": 64,
             "description": "Fixed namespace. Required when the pattern has no {namespace}, and always for arb."
           },
-          "jsonStyle": { "enum": ["nested", "flat"], "description": "Only for format json. Defaults to nested." }
+          "jsonStyle": { "enum": ["nested", "flat"], "description": "Only for format json. Defaults to nested." },
+          "xliffDialect": {
+            "enum": ["angular"],
+            "description": "Only for format xliff. angular writes @angular/localize placeholders (<ph equiv=\"INTERPOLATION\"/>, VAR_PLURAL) on pull and reads ng extract-i18n output on push."
+          }
         },
         "allOf": [
           {
@@ -42,6 +46,10 @@
           {
             "if": { "properties": { "format": { "enum": ["xliff", "arb"] } }, "required": ["format"] },
             "then": { "not": { "required": ["jsonStyle"] } }
+          },
+          {
+            "if": { "properties": { "format": { "enum": ["json", "arb"] } }, "required": ["format"] },
+            "then": { "not": { "required": ["xliffDialect"] } }
           }
         ]
       }

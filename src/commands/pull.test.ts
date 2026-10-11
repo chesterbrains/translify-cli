@@ -308,3 +308,47 @@ describe('runPull', () => {
     });
   });
 });
+
+describe('runPull xliffDialect', () => {
+  const withXliff: Config = {
+    apiUrl: 'https://x/api',
+    files: [{ pattern: 'src/locale/messages.{locale}.xlf', format: 'xliff', namespace: 'web', xliffDialect: 'angular' }],
+    locales: {},
+  };
+
+  it('forwards xliffDialect as dialect', async () => {
+    const client = {
+      get: vi.fn(async () => ({ files: [{ locale: 'it', namespace: 'web', format: 'xliff', content: '<xliff/>\n' }], warnings: [] })),
+    };
+    await runPull({}, { cwd: await tmp(), config: withXliff, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'xliff', dialect: 'angular', namespaces: 'web' });
+  });
+
+  it('renders XLIFF_DIALECT_UNSUPPORTED like lint, exit 6, writes nothing', async () => {
+    const cwd = await tmp();
+    const body = {
+      code: 'XLIFF_DIALECT_UNSUPPORTED',
+      total: 2,
+      cells: [
+        { namespace: 'web', key: 'mixed', locale: 'en', reason: 'mixedIcu' },
+        { namespace: 'web', key: 'price', locale: 'en', reason: 'formattedArg' },
+      ],
+    };
+    const client = {
+      get: vi.fn(async () => {
+        throw new CliError(6, 'x', body);
+      }),
+    };
+
+    const failure: unknown = await runPull({}, { cwd, config: withXliff, api: client as never, out: quiet }).catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(CliError);
+    expect((failure as CliError).exitCode).toBe(6);
+    expect((failure as CliError).message).toMatch(/Pull refused: 2 translation\(s\)/);
+    expect((failure as CliError).message).toMatch(/mixed/);
+    expect((failure as CliError).message).toMatch(/text next to a plural or select/);
+    expect((failure as CliError).message).toMatch(/number, date or time format/);
+    await expect(stat(join(cwd, 'src'))).rejects.toThrow();
+  });
+});
