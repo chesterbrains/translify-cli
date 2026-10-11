@@ -403,3 +403,25 @@ describe('runPush xliffDialect', () => {
     ]);
   });
 });
+
+describe('runPush xliffDialect xcode', () => {
+  it('puts dialect and original on the manifest item and prints server warnings', async () => {
+    const s = await setup(
+      vi.fn().mockResolvedValue(
+        response({ warnings: ['Localization/en.xliff: original mismatch: file says A.xcstrings, rule says B.xcstrings'] }),
+      ),
+    );
+    await mkdir(join(s.cwd, 'Localization'), { recursive: true });
+    await writeFile(join(s.cwd, 'Localization/en.xliff'), '<xliff/>');
+    s.deps.config.files = [
+      { pattern: 'Localization/{locale}.xliff', format: 'xliff', namespace: 'ios', xliffDialect: 'xcode', xliffOriginal: 'B.xcstrings' },
+    ];
+
+    await runPush({}, s.deps);
+
+    expect(JSON.parse(String(formOf(s.post, 0).get('manifest')))).toEqual([
+      { field: 'file0', path: 'Localization/en.xliff', format: 'xliff', locale: 'en', namespace: 'ios', dialect: 'xcode', original: 'B.xcstrings' },
+    ]);
+    expect(s.out.join('\n')).toMatch(/warning: Localization\/en\.xliff: original mismatch/);
+  });
+});

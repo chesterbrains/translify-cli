@@ -352,3 +352,47 @@ describe('runPull xliffDialect', () => {
     await expect(stat(join(cwd, 'src'))).rejects.toThrow();
   });
 });
+
+describe('runPull xliffDialect xcode', () => {
+  const withXcode: Config = {
+    apiUrl: 'https://x/api',
+    files: [{ pattern: 'Localization/{locale}.xliff', format: 'xliff', namespace: 'ios', xliffDialect: 'xcode', xliffOriginal: 'Sources/App/Localizable.xcstrings' }],
+    locales: {},
+  };
+
+  it('forwards dialect and original', async () => {
+    const client = {
+      get: vi.fn(async () => ({ files: [{ locale: 'it', namespace: 'ios', format: 'xliff', content: '<xliff/>\n' }], warnings: [] })),
+    };
+    await runPull({}, { cwd: await tmp(), config: withXcode, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', {
+      format: 'xliff',
+      dialect: 'xcode',
+      original: 'Sources/App/Localizable.xcstrings',
+      namespaces: 'ios',
+    });
+  });
+
+  it('renders the Xcode refusal reasons', async () => {
+    const body = {
+      code: 'XLIFF_DIALECT_UNSUPPORTED',
+      total: 2,
+      cells: [
+        { namespace: 'ios', key: 'a', locale: 'en', reason: 'exactMatch' },
+        { namespace: 'ios', key: 'b', locale: 'it', reason: 'shapeMismatch' },
+      ],
+    };
+    const client = {
+      get: vi.fn(async () => {
+        throw new CliError(6, 'x', body);
+      }),
+    };
+    const failure: unknown = await runPull({}, { cwd: await tmp(), config: withXcode, api: client as never, out: quiet }).catch((e: unknown) => e);
+
+    expect((failure as CliError).exitCode).toBe(6);
+    expect((failure as CliError).message).toMatch(/Pull refused: 2 translation\(s\) cannot be written as XLIFF for xcode/);
+    expect((failure as CliError).message).toMatch(/exact match .* offset/);
+    expect((failure as CliError).message).toMatch(/not the same shape/);
+  });
+});

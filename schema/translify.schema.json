@@ -30,8 +30,14 @@
           },
           "jsonStyle": { "enum": ["nested", "flat"], "description": "Only for format json. Defaults to nested." },
           "xliffDialect": {
-            "enum": ["angular"],
-            "description": "Only for format xliff. angular writes @angular/localize placeholders (<ph equiv=\"INTERPOLATION\"/>, VAR_PLURAL) on pull and reads ng extract-i18n output on push."
+            "enum": ["angular", "xcode"],
+            "description": "Only for format xliff. angular writes @angular/localize placeholders (<ph equiv=\"INTERPOLATION\"/>, VAR_PLURAL) on pull and reads ng extract-i18n output on push. xcode writes XLIFF 1.2 for String Catalogs (positional printf, |==| plural and substitution units) and reads xcodebuild -exportLocalizations output."
+          },
+          "xliffOriginal": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Only with xliffDialect xcode, and required with it: the String Catalog path Xcode knows (e.g. Sources/App/Localizable.xcstrings), written to <file original>. Xcode imports nothing when it does not match."
           }
         },
         "allOf": [
@@ -50,6 +56,11 @@
           {
             "if": { "properties": { "format": { "enum": ["json", "arb"] } }, "required": ["format"] },
             "then": { "not": { "required": ["xliffDialect"] } }
+          },
+          {
+            "if": { "properties": { "xliffDialect": { "const": "xcode" } }, "required": ["xliffDialect"] },
+            "then": { "required": ["xliffOriginal"] },
+            "else": { "not": { "required": ["xliffOriginal"] } }
           }
         ]
       }

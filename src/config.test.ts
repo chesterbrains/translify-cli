@@ -113,3 +113,22 @@ describe('loadConfig xliffDialect', () => {
     await expect(loadConfig(bad)).rejects.toThrow(/files\.0\.xliffDialect only applies to format "xliff"/);
   });
 });
+
+describe('loadConfig xliffDialect xcode', () => {
+  it('requires xliffOriginal with xcode and refuses it elsewhere', async () => {
+    const ok = await withConfig({
+      apiUrl: 'https://x/api',
+      files: [{ pattern: 'L/{locale}.xliff', format: 'xliff', namespace: 'ios', xliffDialect: 'xcode', xliffOriginal: 'Sources/App/Localizable.xcstrings' }],
+    });
+    expect((await loadConfig(ok)).files[0]).toMatchObject({ xliffDialect: 'xcode', xliffOriginal: 'Sources/App/Localizable.xcstrings' });
+
+    const missing = await withConfig({ apiUrl: 'https://x/api', files: [{ pattern: 'L/{locale}.xliff', format: 'xliff', namespace: 'ios', xliffDialect: 'xcode' }] });
+    await expect(loadConfig(missing)).rejects.toThrow(/files\.0\.xliffOriginal required with xliffDialect "xcode"/);
+
+    const stray = await withConfig({
+      apiUrl: 'https://x/api',
+      files: [{ pattern: 'L/{locale}.xlf', format: 'xliff', namespace: 'web', xliffDialect: 'angular', xliffOriginal: 'x' }],
+    });
+    await expect(loadConfig(stray)).rejects.toThrow(/files\.0\.xliffOriginal only applies to xliffDialect "xcode"/);
+  });
+});

@@ -50,6 +50,8 @@ export interface PushResponse {
   staleReset?: number;
   /** Hex SHA-256 of the deletable (unpublished) orphans; a confirmed prune sends it back. Absent on an older server. */
   pruneDigest?: string;
+  /** Non-blocking notes from the server (e.g. an XLIFF <file original> that differs from the rule). Absent when none. */
+  warnings?: string[];
 }
 
 interface Whoami {
@@ -92,6 +94,7 @@ const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, prune:
         locale: match.locale,
         namespace: match.namespace,
         ...(match.rule.format === 'xliff' && match.rule.xliffDialect !== undefined ? { dialect: match.rule.xliffDialect } : {}),
+        ...(match.rule.format === 'xliff' && match.rule.xliffOriginal !== undefined ? { original: match.rule.xliffOriginal } : {}),
       })),
     ),
   );
@@ -154,6 +157,7 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
     })),
   );
   const show = (res: PushResponse, preview?: PushResponse): void => {
+    if (opts.json !== true) for (const warning of res.warnings ?? []) deps.out(`warning: ${warning}`);
     deps.out(
       opts.json === true
         ? JSON.stringify({ preview, response: res, summary: summarizePush(res) })
