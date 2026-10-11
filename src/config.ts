@@ -20,7 +20,8 @@ const fileRule = z
     format: z.enum(['json', 'xliff', 'arb']),
     namespace: z.string().regex(NAMESPACE, 'must be lowercase kebab-case').max(64).optional(),
     jsonStyle: z.enum(['nested', 'flat']).optional(),
-    xliffDialect: z.enum(['angular']).optional(),
+    xliffDialect: z.enum(['angular', 'xcode']).optional(),
+    xliffOriginal: z.string().min(1).max(512).optional(),
   })
   .strict()
   .superRefine((rule, ctx) => {
@@ -35,6 +36,12 @@ const fileRule = z
     }
     if (rule.xliffDialect !== undefined && rule.format !== 'xliff') {
       ctx.addIssue({ code: 'custom', path: ['xliffDialect'], message: 'only applies to format "xliff"' });
+    }
+    if (rule.xliffOriginal !== undefined && rule.xliffDialect !== 'xcode') {
+      ctx.addIssue({ code: 'custom', path: ['xliffOriginal'], message: 'only applies to xliffDialect "xcode"' });
+    }
+    if (rule.xliffDialect === 'xcode' && rule.xliffOriginal === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['xliffOriginal'], message: 'required with xliffDialect "xcode"' });
     }
   })
   .transform((rule) => (rule.format === 'json' ? { ...rule, jsonStyle: rule.jsonStyle ?? 'nested' } : rule));

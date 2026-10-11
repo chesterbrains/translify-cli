@@ -157,6 +157,49 @@ i18next rather than ICU. Give
 such a key its own element so the ICU is the whole message, or move it to a JSON rule. A complete example is the
 Angular app in [translify-examples](https://github.com/chesterbrains/translify-examples).
 
+## Xcode (XLIFF)
+
+Xcode exports and imports **XLIFF 1.2** (`<trans-unit>`), keeps printf placeholders (`%@`, `%lld`) literal, and spreads one
+String Catalog entry over several units for plurals and substitutions. Set `xliffDialect: "xcode"` and `xliffOriginal` on the
+rule and the server converts both ways; Translify keeps ICU, so the same catalog serves React, Flutter, Angular and iOS, and
+iOS translations get placeholder validation (Xcode's own import accepts a target that lost its `%@` without a word).
+
+```json
+{ "files": [{ "pattern": "Localization/{locale}.xliff", "format": "xliff", "namespace": "ios",
+              "xliffDialect": "xcode", "xliffOriginal": "Sources/App/Localizable.xcstrings" }] }
+```
+
+Workflow:
+
+1. Seed once: `xcodebuild -exportLocalizations -localizationPath out -exportLanguage en`, copy
+   `out/en.xcloc/Localized Contents/en.xliff` to `Localization/en.xliff`, `translify push`.
+2. Translate in Translify, then `translify pull`.
+3. `xcodebuild -importLocalizations -localizationPath Localization/it.xliff` (a bare `.xliff` works; `<file original>`
+   comes from `xliffOriginal`).
+
+What `pull` writes (arguments are positional, numbered by first appearance in the source, so a reordered translation keeps
+its meaning; the printf type comes from the push that created the key, else `%@` for text, `%lld` for a plural's count, `%f`
+for a fraction):
+
+| Translify value | Units |
+|---|---|
+| `Hello, {name}` | `key` → `Hello, %1$@` |
+| `{count, plural, one {# item} other {# items}}` | `key\|==\|plural.one` → `%1$lld item`, `key\|==\|plural.other` → `%1$lld items` |
+| `You have {count, plural, one {# item} other {# items}} in your cart, {name}` | `key` → `You have %1$#@count@ in your cart, %2$@`, plus `key\|==\|substitutions.count.plural.one` / `.other` |
+| untranslated | the unit has a `<source>` and no `<target>`, which Xcode shows as untranslated |
+
+What `push` reads: `%@` / `%1$@` → `{arg1}` (renamed to the key's own argument when the key already exists), `%lld` →
+`{arg2}` or `#` inside a plural, `%.2f` → `{arg, number}`, `%%` → `%`; `|==|plural.*` units → one ICU plural named `count`;
+a `%#@name@` substitution → the plural inside the sentence. The printf types are kept in the key's metadata for the next
+pull. Device variations (`|==|device.*`), unknown unit kinds and legacy `.strings`/`.stringsdict` exports are reported as
+`unsupportedVariation` and skipped.
+
+Not supported in this version (the pull is refused with `XLIFF_DIALECT_UNSUPPORTED`): `select` and `selectordinal`, exact
+matches (`=0`) and `offset`, two plurals in one message, nested plurals, number formats without a known printf type (e.g.
+currency), a quoted `'{'`, a translation whose shape differs from the source (plain text for a plural), and keys whose
+placeholders are printf or i18next rather than ICU. A complete example is `examples/ios-xcstrings` in
+[translify-examples](https://github.com/chesterbrains/translify-examples).
+
 ## `translify.json` reference
 
 `translify.json` lives in the repository root; every command reads it from the current directory. The
@@ -172,7 +215,8 @@ fields are refused, and so is any field whose name contains `key`, `secret` or `
 | `files[].format` | `json` \| `xliff` \| `arb` | yes | File format: i18next JSON, XLIFF or Flutter ARB. |
 | `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
 | `files[].jsonStyle` | `nested` \| `flat` | no | Only for `json`. `nested` (the default) writes `{ "a": { "b": "…" } }`, `flat` writes `{ "a.b": "…" }`. |
-| `files[].xliffDialect` | `angular` | no | Only for `xliff`. Writes `@angular/localize` placeholders on pull (`<ph equiv="INTERPOLATION"/>`, `{VAR_PLURAL, …}`) and reads `ng extract-i18n` output on push. See [Angular (XLIFF)](#angular-xliff). |
+| `files[].xliffDialect` | `angular` \| `xcode` | no | Only for `xliff`. `angular` writes `@angular/localize` placeholders on pull and reads `ng extract-i18n` output on push ([Angular (XLIFF)](#angular-xliff)); `xcode` writes XLIFF 1.2 for String Catalogs and reads `xcodebuild -exportLocalizations` output ([Xcode (XLIFF)](#xcode-xliff)). |
+| `files[].xliffOriginal` | string | with `xliffDialect: "xcode"` | The String Catalog path Xcode knows, e.g. `Sources/App/Localizable.xcstrings`; written to `<file original>`. Xcode imports nothing when it does not match the project. Only with `xcode`. |
 | `locales` | object | no | Maps a locale name on disk to a Translify locale code, e.g. `{ "en_US": "en-US" }`. Unmapped names pass through unchanged. Two names may not map to the same code, and a target may not itself be a mapped name. |
 
 Each file must be matched by one rule only, and each (locale, namespace) pair must come from one file only;
@@ -358,7 +402,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `REVIEW_DISABLED` | 1 | `push --status draft` or `--status needs-review` on a project without review. Turn on **Require review** in the project settings, or drop `--status`. Nothing was written. |
 | `APPROVED_ONLY_REQUIRES_WORKING` | 1 | `--only-approved` was combined with `--from env:<slug>`. Pull an environment without it; it already holds only what its gate allowed. |
 | `INVALID_CELLS` | 6 | `publish` refused: translations that would go live have placeholder errors. Nothing was published; the output lists them like `lint` does. Fix them in Translify, or re-run with `--allow-errors` to publish anyway (recorded in the activity log). |
-| `XLIFF_DIALECT_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Angular XLIFF (text beside a plural, nested plurals, number/date formats, printf keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Angular (XLIFF)](#angular-xliff). |
+| `XLIFF_DIALECT_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written in the rule's XLIFF dialect (Angular: text beside a plural, nested plurals, number/date formats; Xcode: `select`, `=0`/`offset`, a translation of a different shape; both: printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Angular (XLIFF)](#angular-xliff) and [Xcode (XLIFF)](#xcode-xliff). |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |

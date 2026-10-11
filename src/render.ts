@@ -189,6 +189,9 @@ const REASON_TEXT: Record<string, string> = {
   formattedArg: 'a number, date or time format has no Angular placeholder',
   literalBrace: "a quoted literal brace ('{') cannot be loaded by Angular",
   syntax: 'the key uses printf or i18next placeholders, not ICU',
+  exactMatch: 'an exact match (=0, =1) or offset has no Xcode plural category',
+  shapeMismatch: 'the translation is not the same shape as the source (plural vs plain text, or a different plural argument)',
+  unsupportedVariation: 'a device variation or an unknown |==| unit (not supported)',
 };
 
 /** Like renderIssueCells: namespace, key, then one line per cell with the locale as named on disk. */

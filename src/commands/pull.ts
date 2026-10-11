@@ -47,10 +47,10 @@ const isDialectUnsupported = (details: unknown): details is DialectBody =>
   typeof details === 'object' && details !== null && (details as { code?: unknown }).code === 'XLIFF_DIALECT_UNSUPPORTED';
 
 /** The server's one-line refusal, the cells grouped like `lint`, and the way out. */
-const dialectRefusal = (body: DialectBody, config: Config): CliError => {
+const dialectRefusal = (body: DialectBody, config: Config, dialect: string): CliError => {
   const cells: ReasonCell[] = Array.isArray(body.cells) ? body.cells : [];
   const lines: string[] = [
-    `Pull refused: ${body.total} translation(s) cannot be written as Angular XLIFF. Nothing was written.`,
+    `Pull refused: ${body.total} translation(s) cannot be written as XLIFF for ${dialect}. Nothing was written.`,
     ...renderReasonCells(cells, config),
   ];
   if (body.total > cells.length) lines.push(`Showing first ${cells.length} of ${body.total}.`);
@@ -110,6 +110,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     const query: Record<string, string> = { format: rule.format };
     if (rule.format === 'json' && rule.jsonStyle !== undefined) query.jsonStyle = rule.jsonStyle;
     if (rule.format === 'xliff' && rule.xliffDialect !== undefined) query.dialect = rule.xliffDialect;
+    if (rule.format === 'xliff' && rule.xliffOriginal !== undefined) query.original = rule.xliffOriginal;
     if (opts.from !== undefined) query.from = opts.from;
     if (opts.onlyApproved) query.approvedOnly = 'true';
     if (opts.locale !== undefined) query.locales = toTranslifyLocale(opts.locale, deps.config);
@@ -117,7 +118,9 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     if (namespace !== undefined) query.namespaces = namespace;
 
     const res: PullResponse = await deps.api.get<PullResponse>('/cli/v1/pull', query).catch((error: unknown) => {
-      if (error instanceof CliError && isDialectUnsupported(error.details)) throw dialectRefusal(error.details, deps.config);
+      if (error instanceof CliError && isDialectUnsupported(error.details)) {
+        throw dialectRefusal(error.details, deps.config, rule.xliffDialect ?? 'angular');
+      }
       throw error;
     });
     responses.push(res);
