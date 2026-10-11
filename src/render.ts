@@ -187,6 +187,7 @@ const REASON_TEXT: Record<string, string> = {
   ordinal: 'selectordinal has no Angular equivalent',
   invalidIcu: 'does not parse as ICU',
   formattedArg: 'a number, date or time format has no Angular placeholder',
+  literalBrace: "a quoted literal brace ('{') cannot be loaded by Angular",
   syntax: 'the key uses printf or i18next placeholders, not ICU',
 };
 

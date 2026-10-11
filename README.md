@@ -133,7 +133,7 @@ Give every template string `i18n="@@<key>"` so the unit ids are your keys. What 
 | Translify value | Angular unit |
 |---|---|
 | `Hello, {name}` | `Hello, <ph id="0" equiv="INTERPOLATION" disp="{{ name }}"/>` |
-| `{a} {b} {a}` | ids `0`, `1`, `2`; `equiv` `INTERPOLATION`, `INTERPOLATION_1`, `INTERPOLATION` (one name per distinct argument, in order of first appearance) |
+| `{a} {b} {a}` | ids `0`, `1`, `2`; `equiv` `INTERPOLATION`, `INTERPOLATION_1`, `INTERPOLATION` (one name per distinct argument, in order of first appearance in the source; a translation reuses the source's names however it reorders them) |
 | `{count, plural, one {{count} item} other {# items}}` (the whole message) | `{VAR_PLURAL, plural, one {<ph id="0" equiv="INTERPOLATION" disp="{{ count }}"/> item} other {<ph id="1" equiv="INTERPOLATION" disp="{{ count }}"/> items}}` |
 | `{g, select, male {he} other {they}}` (the whole message) | `{VAR_SELECT, select, male {he} other {they}}` |
 
@@ -152,7 +152,8 @@ description. After a round trip `#` comes back as `{count}`, and a plural or sel
 
 Not supported in this version (the pull is refused with `XLIFF_DIALECT_UNSUPPORTED`, the push reports the unit): text
 beside a plural or select, two ICUs in one message, a plural or select inside another, `selectordinal`, `number` /
-`date` / `time` formats, HTML inside a message, and keys whose placeholders are printf or i18next rather than ICU. Give
+`date` / `time` formats, a quoted literal brace (`'{'`), HTML inside a message, and keys whose placeholders are printf or
+i18next rather than ICU. Give
 such a key its own element so the ICU is the whole message, or move it to a JSON rule. A complete example is the
 Angular app in [translify-examples](https://github.com/chesterbrains/translify-examples).
 
