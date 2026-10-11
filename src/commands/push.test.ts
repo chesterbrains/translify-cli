@@ -386,3 +386,20 @@ describe('runPush', () => {
     expect(formOf(post, 1).get('status')).toBe('DRAFT');
   });
 });
+
+describe('runPush xliffDialect', () => {
+  it('puts dialect on the manifest item of an xliff rule with xliffDialect', async () => {
+    const s = await setup();
+    await mkdir(join(s.cwd, 'src/locale'), { recursive: true });
+    await writeFile(join(s.cwd, 'src/locale/messages.en.xlf'), '<xliff/>');
+    s.deps.config.files = [
+      { pattern: 'src/locale/messages.{locale}.xlf', format: 'xliff', namespace: 'web', xliffDialect: 'angular' },
+    ];
+
+    await runPush({}, s.deps);
+
+    expect(JSON.parse(String(formOf(s.post, 0).get('manifest')))).toEqual([
+      { field: 'file0', path: 'src/locale/messages.en.xlf', format: 'xliff', locale: 'en', namespace: 'web', dialect: 'angular' },
+    ]);
+  });
+});

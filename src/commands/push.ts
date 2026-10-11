@@ -91,6 +91,7 @@ const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, prune:
         format: match.rule.format,
         locale: match.locale,
         namespace: match.namespace,
+        ...(match.rule.format === 'xliff' && match.rule.xliffDialect !== undefined ? { dialect: match.rule.xliffDialect } : {}),
       })),
     ),
   );

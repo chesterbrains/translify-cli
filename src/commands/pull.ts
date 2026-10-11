@@ -6,6 +6,7 @@ import type { ExitCode } from '../errors.js';
 import type { Api } from '../http.js';
 import { CliError, EXIT, ONLY_APPROVED_NEEDS_WORKING } from '../errors.js';
 import { pathFor, toFsLocale, toTranslifyLocale } from '../patterns.js';
+import { renderReasonCells, type ReasonCell } from '../render.js';
 
 interface PullResponse {
   files: Array<{ locale: string; namespace: string; format: string; content: string }>;
@@ -34,6 +35,29 @@ const readOrUndefined = async (path: string): Promise<string | undefined> =>
   readFile(path, 'utf8').catch(() => undefined);
 
 const NESTED_CONFLICT: RegExp = /nested JSON cannot hold both/;
+
+/** The 422 `XLIFF_DIALECT_UNSUPPORTED` body: up to 100 cells, `total` counts them all. */
+interface DialectBody {
+  code: 'XLIFF_DIALECT_UNSUPPORTED';
+  total: number;
+  cells: ReasonCell[];
+}
+
+const isDialectUnsupported = (details: unknown): details is DialectBody =>
+  typeof details === 'object' && details !== null && (details as { code?: unknown }).code === 'XLIFF_DIALECT_UNSUPPORTED';
+
+/** The server's one-line refusal, the cells grouped like `lint`, and the way out. */
+const dialectRefusal = (body: DialectBody, config: Config): CliError => {
+  const cells: ReasonCell[] = Array.isArray(body.cells) ? body.cells : [];
+  const lines: string[] = [
+    `Pull refused: ${body.total} translation(s) cannot be written as Angular XLIFF. Nothing was written.`,
+    ...renderReasonCells(cells, config),
+  ];
+  if (body.total > cells.length) lines.push(`Showing first ${cells.length} of ${body.total}.`);
+  lines.push('Split the text so each key is plain text with placeholders or one plural/select, or move the key to a JSON rule.');
+
+  return new CliError(EXIT.issues, lines.join('\n'), body);
+};
 
 /**
  * Flutter's gen_l10n requires `@@locale` to match the file name, and only the CLI knows the disk
@@ -85,13 +109,17 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
 
     const query: Record<string, string> = { format: rule.format };
     if (rule.format === 'json' && rule.jsonStyle !== undefined) query.jsonStyle = rule.jsonStyle;
+    if (rule.format === 'xliff' && rule.xliffDialect !== undefined) query.dialect = rule.xliffDialect;
     if (opts.from !== undefined) query.from = opts.from;
     if (opts.onlyApproved) query.approvedOnly = 'true';
     if (opts.locale !== undefined) query.locales = toTranslifyLocale(opts.locale, deps.config);
     const namespace: string | undefined = rule.namespace ?? opts.namespace;
     if (namespace !== undefined) query.namespaces = namespace;
 
-    const res: PullResponse = await deps.api.get<PullResponse>('/cli/v1/pull', query);
+    const res: PullResponse = await deps.api.get<PullResponse>('/cli/v1/pull', query).catch((error: unknown) => {
+      if (error instanceof CliError && isDialectUnsupported(error.details)) throw dialectRefusal(error.details, deps.config);
+      throw error;
+    });
     responses.push(res);
     for (const warning of res.warnings) {
       lines.push(`warning: ${warning}`);

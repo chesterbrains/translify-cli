@@ -117,6 +117,46 @@ flutter gen-l10n
 
 `"@@locale"` is optional in ARB files: when it is absent, the file's locale is used. When it is present it must match the file's locale (case and `_`/`-` are ignored). On `pull`, the CLI writes `@@locale` using the locale name on disk (for example `en_US` in `app_en_US.arb`), as `flutter gen-l10n` expects.
 
+## Angular (XLIFF)
+
+Angular's `@angular/localize` writes a template interpolation as an inline `<ph>` element and a template ICU as
+`{VAR_PLURAL, …}` / `{VAR_SELECT, …}`, and matches a translation's placeholders by the `equiv` name. Plain ICU text
+(`Hello, {name}`) in an Angular XLIFF is therefore literal text at build time. Set `xliffDialect` on the rule and the
+server converts both ways:
+
+```json
+{ "files": [{ "pattern": "src/locale/messages.{locale}.xlf", "format": "xliff", "namespace": "web", "xliffDialect": "angular" }] }
+```
+
+Give every template string `i18n="@@<key>"` so the unit ids are your keys. What `pull` writes:
+
+| Translify value | Angular unit |
+|---|---|
+| `Hello, {name}` | `Hello, <ph id="0" equiv="INTERPOLATION" disp="{{ name }}"/>` |
+| `{a} {b} {a}` | ids `0`, `1`, `2`; `equiv` `INTERPOLATION`, `INTERPOLATION_1`, `INTERPOLATION` (one name per distinct argument, in order of first appearance in the source; a translation reuses the source's names however it reorders them) |
+| `{count, plural, one {{count} item} other {# items}}` (the whole message) | `{VAR_PLURAL, plural, one {<ph id="0" equiv="INTERPOLATION" disp="{{ count }}"/> item} other {<ph id="1" equiv="INTERPOLATION" disp="{{ count }}"/> items}}` |
+| `{g, select, male {he} other {they}}` (the whole message) | `{VAR_SELECT, select, male {he} other {they}}` |
+
+What `push` reads from `ng extract-i18n --format=xlf2` output:
+
+| Angular | Translify argument |
+|---|---|
+| `<ph equiv="INTERPOLATION" disp="{{ name }}"/>` | `{name}` |
+| `disp="{{ count() }}"`, `disp="{{ user.name }}"`, `disp="{{ price | currency }}"` | the head identifier: `{count}`, `{user}`, `{price}` (also through `!.` and `[…]`); two that collide become `{user}` and `{user_2}` |
+| no usable `disp` | `{p0}`, `{p1}`, … from the `equiv` number |
+| `VAR_PLURAL` / `VAR_SELECT` | named after the first interpolation inside its branches, else `count` / `value` |
+
+Units Angular hashes for a message that mixes text with an ICU are dropped, and `<note category="location">` is not a
+description. After a round trip `#` comes back as `{count}`, and a plural or select with no interpolation inside keeps
+`count` / `value` as its argument.
+
+Not supported in this version (the pull is refused with `XLIFF_DIALECT_UNSUPPORTED`, the push reports the unit): text
+beside a plural or select, two ICUs in one message, a plural or select inside another, `selectordinal`, `number` /
+`date` / `time` formats, a quoted literal brace (`'{'`), HTML inside a message, and keys whose placeholders are printf or
+i18next rather than ICU. Give
+such a key its own element so the ICU is the whole message, or move it to a JSON rule. A complete example is the
+Angular app in [translify-examples](https://github.com/chesterbrains/translify-examples).
+
 ## `translify.json` reference
 
 `translify.json` lives in the repository root; every command reads it from the current directory. The
@@ -132,6 +172,7 @@ fields are refused, and so is any field whose name contains `key`, `secret` or `
 | `files[].format` | `json` \| `xliff` \| `arb` | yes | File format: i18next JSON, XLIFF or Flutter ARB. |
 | `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
 | `files[].jsonStyle` | `nested` \| `flat` | no | Only for `json`. `nested` (the default) writes `{ "a": { "b": "…" } }`, `flat` writes `{ "a.b": "…" }`. |
+| `files[].xliffDialect` | `angular` | no | Only for `xliff`. Writes `@angular/localize` placeholders on pull (`<ph equiv="INTERPOLATION"/>`, `{VAR_PLURAL, …}`) and reads `ng extract-i18n` output on push. See [Angular (XLIFF)](#angular-xliff). |
 | `locales` | object | no | Maps a locale name on disk to a Translify locale code, e.g. `{ "en_US": "en-US" }`. Unmapped names pass through unchanged. Two names may not map to the same code, and a target may not itself be a mapped name. |
 
 Each file must be matched by one rule only, and each (locale, namespace) pair must come from one file only;
@@ -289,7 +330,7 @@ Pull and publish on deploy:
 | 3 | Plan quota exceeded |
 | 4 | Network failure, server error, push too large, CLI too old, transaction conflict, or rate limited after 3 retries |
 | 5 | `publish --fail-on-withheld`: the publish went through, but the review gate withheld some translations |
-| 6 | Placeholder errors: `lint` found them (or more warnings than `--max-warnings`), or `publish` refused because translations with errors would go live |
+| 6 | Placeholder errors: `lint` found them (or more warnings than `--max-warnings`), `publish` refused because translations with errors would go live, or `pull` refused an Angular XLIFF rule |
 
 The server's error `code` decides the exit code first; the HTTP status is only used for codes the CLI does not know.
 
@@ -317,6 +358,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `REVIEW_DISABLED` | 1 | `push --status draft` or `--status needs-review` on a project without review. Turn on **Require review** in the project settings, or drop `--status`. Nothing was written. |
 | `APPROVED_ONLY_REQUIRES_WORKING` | 1 | `--only-approved` was combined with `--from env:<slug>`. Pull an environment without it; it already holds only what its gate allowed. |
 | `INVALID_CELLS` | 6 | `publish` refused: translations that would go live have placeholder errors. Nothing was published; the output lists them like `lint` does. Fix them in Translify, or re-run with `--allow-errors` to publish anyway (recorded in the activity log). |
+| `XLIFF_DIALECT_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Angular XLIFF (text beside a plural, nested plurals, number/date formats, printf keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Angular (XLIFF)](#angular-xliff). |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |

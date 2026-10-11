@@ -97,3 +97,19 @@ describe('loadConfig', () => {
     await expect(loadConfig(root)).rejects.toThrow(/files\.0/);
   });
 });
+
+describe('loadConfig xliffDialect', () => {
+  it('accepts xliffDialect on xliff rules only', async () => {
+    const ok = await withConfig({
+      apiUrl: 'https://x/api',
+      files: [{ pattern: 'l/{locale}.xlf', format: 'xliff', namespace: 'web', xliffDialect: 'angular' }],
+    });
+    expect((await loadConfig(ok)).files[0]).toMatchObject({ xliffDialect: 'angular' });
+
+    const bad = await withConfig({
+      apiUrl: 'https://x/api',
+      files: [{ pattern: 'l/{locale}/{namespace}.json', format: 'json', xliffDialect: 'angular' }],
+    });
+    await expect(loadConfig(bad)).rejects.toThrow(/files\.0\.xliffDialect only applies to format "xliff"/);
+  });
+});
