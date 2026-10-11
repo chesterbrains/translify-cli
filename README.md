@@ -9,6 +9,8 @@ The CLI reads a `translify.json` that maps your translation files (i18next JSON,
 - `status` to fail CI when local files differ from Translify,
 - `publish` an environment.
 
+Complete example apps — React + i18next at runtime, Flutter (ARB) and Angular (XLIFF) at build time — live in [translify-examples](https://github.com/chesterbrains/translify-examples).
+
 ## Install
 
 ### Standalone binary (no Node needed)
