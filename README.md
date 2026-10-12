@@ -128,7 +128,9 @@ server converts both ways:
 { "files": [{ "pattern": "src/locale/messages.{locale}.xlf", "format": "xliff", "namespace": "web", "xliffDialect": "angular" }] }
 ```
 
-Give every template string `i18n="@@<key>"` so the unit ids are your keys. What `pull` writes:
+Give every template string `i18n="@@<key>"` so the unit ids are your keys. A translation file's `trgLang` must be the
+Translify locale code: with `"locales": { "it": "it-IT" }` the file is still `messages.it.xlf`, but it declares
+`trgLang="it-IT"`, or `push` is refused with `File targets it but it-IT was requested`. What `pull` writes:
 
 | Translify value | Angular unit |
 |---|---|
@@ -217,7 +219,7 @@ fields are refused, and so is any field whose name contains `key`, `secret` or `
 | `files[].jsonStyle` | `nested` \| `flat` | no | Only for `json`. `nested` (the default) writes `{ "a": { "b": "…" } }`, `flat` writes `{ "a.b": "…" }`. |
 | `files[].xliffDialect` | `angular` \| `xcode` | no | Only for `xliff`. `angular` writes `@angular/localize` placeholders on pull and reads `ng extract-i18n` output on push ([Angular (XLIFF)](#angular-xliff)); `xcode` writes XLIFF 1.2 for String Catalogs and reads `xcodebuild -exportLocalizations` output ([Xcode (XLIFF)](#xcode-xliff)). |
 | `files[].xliffOriginal` | string | with `xliffDialect: "xcode"` | The String Catalog path Xcode knows, e.g. `Sources/App/Localizable.xcstrings`; written to `<file original>`. Xcode imports nothing when it does not match the project. Only with `xcode`. |
-| `locales` | object | no | Maps a locale name on disk to a Translify locale code, e.g. `{ "en_US": "en-US" }`. Unmapped names pass through unchanged. Two names may not map to the same code, and a target may not itself be a mapped name. |
+| `locales` | object | no | Maps a locale name on disk to a Translify locale code, e.g. `{ "en_US": "en-US" }`. Unmapped names pass through unchanged. Two names may not map to the same code, and a target may not itself be a mapped name. The map renames files only: an XLIFF's `trgLang` (2.0) or `target-language` (1.2), when present, must be the Translify code itself, or `push` is refused with `File targets it but it-IT was requested`. |
 
 Each file must be matched by one rule only, and each (locale, namespace) pair must come from one file only;
 otherwise the CLI stops before sending anything and names the files involved.
