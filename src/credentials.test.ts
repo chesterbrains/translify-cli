@@ -31,6 +31,17 @@ describe('credentials', () => {
     expect(error.message).not.toContain('hunter2');
   });
 
+  it('refuses an sk_ key with characters a secret key never has, before any request (TRLIFY-128)', async () => {
+    // A pasted placeholder: the ellipsis is non-ASCII, which fetch would reject as a header value.
+    const error = (await resolveKey({ TRANSLIFY_SECRET_KEY: 'sk_…' }).catch((e: unknown) => e)) as CliError;
+    expect(error.exitCode).toBe(2);
+    expect(error.message).toMatch(/TRANSLIFY_SECRET_KEY/);
+    expect(error.message).not.toContain('…');
+    await expect(resolveKey({ TRANSLIFY_SECRET_KEY: 'sk_abc def' })).rejects.toThrow(CliError);
+    await expect(resolveKey({ TRANSLIFY_SECRET_KEY: 'sk_abc/def=' })).rejects.toThrow(CliError);
+    expect(await resolveKey({ TRANSLIFY_SECRET_KEY: 'sk_aB9-_' })).toBe('sk_aB9-_');
+  });
+
   it('exits 2 when there is no key anywhere', async () => {
     const error = (await resolveKey(await tempEnv()).catch((e: unknown) => e)) as CliError;
     expect(error.exitCode).toBe(2);
