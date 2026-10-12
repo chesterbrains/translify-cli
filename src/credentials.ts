@@ -16,6 +16,8 @@ export function credentialsPath(env: Env = process.env): string {
   return join(absolute(env.XDG_CONFIG_HOME) ?? join(homedir(), '.config'), 'translify', 'credentials');
 }
 
+const SECRET_KEY_SHAPE: RegExp = /^sk_[A-Za-z0-9_-]+$/;
+
 // Messages never echo the value: a mistyped key is still a secret.
 export const assertSecret = (key: string): string => {
   if (key.startsWith('pk_')) {
@@ -25,6 +27,14 @@ export const assertSecret = (key: string): string => {
     );
   }
   if (!key.startsWith('sk_')) throw new CliError(EXIT.auth, 'Not a Translify secret key (expected sk_...).');
+  // A key is `sk_` plus base64url. Anything else (a pasted `…`, a space, a `/`) is caught here: fetch
+  // would refuse it as a header value, which reads as a connection error (TRLIFY-128).
+  if (!SECRET_KEY_SHAPE.test(key)) {
+    throw new CliError(
+      EXIT.auth,
+      'The key has characters a secret key never has (only letters, digits, - and _ after sk_). Check TRANSLIFY_SECRET_KEY.',
+    );
+  }
 
   return key;
 };
