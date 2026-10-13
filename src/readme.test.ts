@@ -61,4 +61,9 @@ describe('README', () => {
       expect(ci, recipe).toContain(`https://github.com/chesterbrains/translify-cli/blob/main/recipes/github-actions/${recipe}`);
     }
   });
+
+  it('documents the init flags next to the other command options', () => {
+    const options: string = section('Commands');
+    expect(options).toMatch(/- `init`: .*`-y\/--yes`.*`--api-url <url>`/);
+  });
 });

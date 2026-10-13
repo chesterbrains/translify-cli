@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { loadConfig } from '../config.js';
-import { detectLayout, runInit, suggestLocaleMap, type InitDeps, type WhoamiInfo } from './init.js';
+import { CliError, EXIT } from '../errors.js';
+import { runInit, type InitDeps, type WhoamiInfo } from './init.js';
 
 const tree = async (files: Record<string, string>): Promise<string> => {
   const root: string = await mkdtemp(join(tmpdir(), 'tfy-'));
@@ -16,102 +17,47 @@ const tree = async (files: Record<string, string>): Promise<string> => {
   return root;
 };
 
-describe('detectLayout', () => {
-  it('detects i18next under public/locales', async () => {
-    expect(await detectLayout(await tree({ 'public/locales/en/common.json': '{}' }))).toEqual([
-      { pattern: 'public/locales/{locale}/{namespace}.json', format: 'json', jsonStyle: 'nested' },
-    ]);
-  });
-
-  it.each(['locales', 'src/locales', 'src/i18n'])('detects i18next under %s', async (root) => {
-    expect(await detectLayout(await tree({ [`${root}/en/common.json`]: '{}' }))).toEqual([
-      { pattern: `${root}/{locale}/{namespace}.json`, format: 'json', jsonStyle: 'nested' },
-    ]);
-  });
-
-  it('detects Flutter from l10n.yaml', async () => {
-    const root: string = await tree({
-      'l10n.yaml': 'arb-dir: lib/i18n\ntemplate-arb-file: strings_en.arb\n',
-      'lib/i18n/strings_en.arb': '{}',
-    });
-    expect(await detectLayout(root)).toEqual([{ pattern: 'lib/i18n/strings_{locale}.arb', format: 'arb', namespace: 'app' }]);
-  });
-
-  it('defaults l10n.yaml to lib/l10n and app_en.arb', async () => {
-    expect(await detectLayout(await tree({ 'l10n.yaml': 'synthetic-package: false\n' }))).toEqual([
-      { pattern: 'lib/l10n/app_{locale}.arb', format: 'arb', namespace: 'app' },
-    ]);
-  });
-
-  it('detects Flutter from lib/l10n/*.arb without l10n.yaml', async () => {
-    expect(await detectLayout(await tree({ 'lib/l10n/app_en.arb': '{}' }))).toEqual([
-      { pattern: 'lib/l10n/app_{locale}.arb', format: 'arb', namespace: 'app' },
-    ]);
-  });
-
-  it.each([
-    ['app_en_US.arb', 'app'],
-    ['app_pt_BR.arb', 'app'],
-    ['app_zh_Hant.arb', 'app'],
-    ['my_app_en.arb', 'my_app'],
-    ['strings_en.arb', 'strings'],
-  ])('derives the ARB prefix from %s', async (template, prefix) => {
-    const root: string = await tree({ 'l10n.yaml': `arb-dir: lib/l10n\ntemplate-arb-file: ${template}\n` });
-    expect(await detectLayout(root)).toEqual([{ pattern: `lib/l10n/${prefix}_{locale}.arb`, format: 'arb', namespace: 'app' }]);
-  });
-
-  it('reads l10n.yaml with quotes, comments, CRLF and a leading ./', async () => {
-    const root: string = await tree({
-      'l10n.yaml': '# arb-dir: nope\r\narb-dir: "./lib/i18n/"  # where\r\ntemplate-arb-file: \'app_en_US.arb\'\r\n',
-    });
-    expect(await detectLayout(root)).toEqual([{ pattern: 'lib/i18n/app_{locale}.arb', format: 'arb', namespace: 'app' }]);
-  });
-
-  it('returns nothing for an unknown layout', async () => {
-    expect(await detectLayout(await tree({ 'README.md': '' }))).toEqual([]);
-  });
-});
-
-describe('suggestLocaleMap', () => {
-  it('maps locales that differ only by case or separator', () => {
-    expect(suggestLocaleMap(['en_US', 'it-IT', 'fr'], ['en-US', 'it-IT', 'fr'])).toEqual({ en_US: 'en-US' });
-    expect(suggestLocaleMap(['pt_br'], ['pt-BR'])).toEqual({ pt_br: 'pt-BR' });
-  });
-
-  it('skips unrelated locales, and targets that would collide or chain', () => {
-    expect(suggestLocaleMap(['de'], ['en-US'])).toEqual({});
-    expect(suggestLocaleMap(['en_US', 'en-us'], ['en-US'])).toEqual({ en_US: 'en-US' });
-    expect(suggestLocaleMap(['en_US', 'en-US'], ['en-US'])).toEqual({});
-  });
-});
+const WHOAMI: WhoamiInfo = {
+  project: { name: 'Acme', slug: 'acme', defaultLocale: 'en-US' },
+  key: { scopes: ['PULL', 'PUSH'] },
+  locales: ['en-US', 'it-IT'],
+};
+const SAVED: string = '/home/me/.config/translify/credentials';
+const PROMPT: InitDeps['prompt'] = {
+  input: async (_m, def) => def,
+  confirm: async () => true,
+  checkbox: async (_m, options) => options,
+  secret: async () => '',
+};
 
 const deps = (cwd: string, over: Partial<InitDeps> = {}): { d: InitDeps; out: string[] } => {
   const out: string[] = [];
   const d: InitDeps = {
     cwd,
     isTty: true,
-    out: (line) => out.push(line),
+    yes: false,
     apiUrlDefault: 'https://example.test/api',
-    prompt: { input: async (_m, def) => def, confirm: async () => true, choose: async (_m, options) => options[0] ?? '' },
-    fetchWhoami: async () => undefined,
+    out: (line) => out.push(line),
+    prompt: PROMPT,
+    findKey: async () => undefined,
+    saveKey: async () => SAVED,
+    fetchWhoami: async () => WHOAMI,
     ...over,
   };
 
   return { d, out };
 };
 
-const WHOAMI: WhoamiInfo = {
-  project: { name: 'Acme', slug: 'acme', defaultLocale: 'en-US' },
-  locales: ['en-US', 'it-IT'],
-};
+const written = async (cwd: string): Promise<string> => readFile(join(cwd, 'translify.json'), 'utf8');
+const notWritten = async (cwd: string): Promise<void> => expect(written(cwd)).rejects.toThrow();
+const rejected = (): CliError => new CliError(EXIT.auth, 'Secret key invalid.');
 
-describe('runInit', () => {
+describe('runInit: output file', () => {
   it('writes a translify.json that loadConfig accepts, with $schema and no key', async () => {
     const cwd: string = await tree({ 'public/locales/en/common.json': '{}' });
-    const { d } = deps(cwd);
 
-    expect(await runInit(d)).toBe(0);
-    const raw: string = await readFile(join(cwd, 'translify.json'), 'utf8');
+    expect(await runInit(deps(cwd).d)).toBe(0);
+    const raw: string = await written(cwd);
     expect(raw.endsWith('\n')).toBe(true);
     expect(JSON.parse(raw).$schema).toBe('https://unpkg.com/@chesterbrains/translify-cli/schema/translify.schema.json');
     expect(raw).not.toMatch(/key|secret|token/i);
@@ -122,40 +68,66 @@ describe('runInit', () => {
     });
   });
 
+  it('prints the exact bytes it writes, and prints detection notes', async () => {
+    const cwd: string = await tree({ 'angular.json': JSON.stringify({ projects: { app: { i18n: { locales: { it: 'src/locale/messages.it.xlf' } } } } }) });
+    const { d, out } = deps(cwd);
+
+    expect(await runInit(d)).toBe(0);
+    const raw: string = await written(cwd);
+    expect(out.join('\n')).toContain(raw.trimEnd());
+    expect(out.join('\n')).toContain('ng extract-i18n');
+  });
+
   it('still writes a valid file with an example rule when nothing is detected', async () => {
     const cwd: string = await tree({ 'README.md': '' });
     const { d, out } = deps(cwd);
 
     expect(await runInit(d)).toBe(0);
     await expect(loadConfig(cwd)).resolves.toMatchObject({ files: [expect.any(Object)] });
-    expect(out.join('\n')).toMatch(/edit files\[\]/);
+    expect(out.join('\n')).toMatch(/No i18next, Flutter, Angular or Xcode layout found/);
   });
 
-  it('writes the suggested locales map from whoami and still validates', async () => {
-    const cwd: string = await tree({ 'locales/en_US/common.json': '{}', 'locales/it-IT/common.json': '{}' });
-    const { d, out } = deps(cwd, { fetchWhoami: async () => WHOAMI });
+  it('writes nothing when the preview is declined', async () => {
+    const cwd: string = await tree({ 'locales/en/a.json': '{}' });
+    const confirm = vi.fn(async (message: string) => !/Write translify\.json/.test(message));
+    const { d, out } = deps(cwd, { prompt: { ...PROMPT, confirm } });
 
-    expect(await runInit(d)).toBe(0);
-    expect(out.join('\n')).toMatch(/Project: Acme, default locale en-US; locales: en-US, it-IT/);
-    await expect(loadConfig(cwd)).resolves.toMatchObject({ locales: { en_US: 'en-US' } });
+    expect(await runInit(d)).toBe(1);
+    expect(confirm).toHaveBeenCalledWith('Write translify.json?', true);
+    expect(out.at(-1)).toBe('Nothing was written.');
+    await notWritten(cwd);
   });
 
-  it('leaves the map out when the suggestion is declined', async () => {
-    const cwd: string = await tree({ 'locales/en_US/common.json': '{}' });
-    const { d } = deps(cwd, { fetchWhoami: async () => WHOAMI, prompt: { input: async (_m, def) => def, confirm: async () => false, choose: async (_m, o) => o[0] ?? '' } });
+  it('rejects a bad apiUrl and writes nothing', async () => {
+    const cwd: string = await tree({ 'locales/en/a.json': '{}' });
+    const { d } = deps(cwd, { prompt: { ...PROMPT, input: async () => 'not a url' } });
 
-    await runInit(d);
-    await expect(loadConfig(cwd)).resolves.toMatchObject({ locales: {} });
+    expect(await runInit(d)).toBe(1);
+    await notWritten(cwd);
   });
 
-  it('refuses to overwrite an existing translify.json without confirmation', async () => {
+  it('takes --api-url without prompting and validates it', async () => {
+    const cwd: string = await tree({ 'locales/en/a.json': '{}' });
+    const input = vi.fn();
+    expect(await runInit(deps(cwd, { apiUrl: 'https://custom.test/api', prompt: { ...PROMPT, input } }).d)).toBe(0);
+    expect(input).not.toHaveBeenCalled();
+    await expect(loadConfig(cwd)).resolves.toMatchObject({ apiUrl: 'https://custom.test/api' });
+
+    const bad: string = await tree({ 'locales/en/a.json': '{}' });
+    expect(await runInit(deps(bad, { apiUrl: 'ftp://x' }).d)).toBe(1);
+    await notWritten(bad);
+  });
+});
+
+describe('runInit: existing file', () => {
+  it('refuses to overwrite without confirmation', async () => {
     const cwd: string = await tree({ 'translify.json': 'KEEP', 'locales/en/a.json': '{}' });
     const confirm = vi.fn().mockResolvedValue(false);
-    const { d } = deps(cwd, { prompt: { input: async (_m, def) => def, confirm, choose: vi.fn() } });
+    const { d } = deps(cwd, { prompt: { ...PROMPT, confirm } });
 
     expect(await runInit(d)).toBe(1);
     expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/overwrite/i), false);
-    expect(await readFile(join(cwd, 'translify.json'), 'utf8')).toBe('KEEP');
+    expect(await written(cwd)).toBe('KEEP');
   });
 
   it('overwrites when confirmed', async () => {
@@ -165,32 +137,181 @@ describe('runInit', () => {
     await expect(loadConfig(cwd)).resolves.toBeDefined();
   });
 
-  it('asks which layout to keep when several match, and prints what was dropped', async () => {
-    const cwd: string = await tree({ 'locales/en/common.json': '{}', 'public/locales/fr/common.json': '{}' });
-    const choose = vi.fn().mockResolvedValue('public/locales/{locale}/{namespace}.json');
-    const { d, out } = deps(cwd, { prompt: { input: async (_m, def) => def, confirm: async () => true, choose } });
+  it('never overwrites under --yes, and stops before any prompt or request', async () => {
+    const cwd: string = await tree({ 'translify.json': 'KEEP', 'locales/en/a.json': '{}' });
+    const fetchWhoami = vi.fn();
+    const confirm = vi.fn();
+    const { d, out } = deps(cwd, { yes: true, fetchWhoami, prompt: { ...PROMPT, confirm } });
+
+    expect(await runInit(d)).toBe(1);
+    expect(out.join('\n')).toContain('translify.json already exists. Delete it first.');
+    expect(fetchWhoami).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(await written(cwd)).toBe('KEEP');
+  });
+});
+
+describe('runInit: key', () => {
+  it('uses a stored key silently and prints the project line', async () => {
+    const cwd: string = await tree({ 'locales/en_US/common.json': '{}', 'locales/it-IT/common.json': '{}' });
+    const fetchWhoami = vi.fn().mockResolvedValue(WHOAMI);
+    const secret = vi.fn();
+    const saveKey = vi.fn();
+    const { d, out } = deps(cwd, { findKey: async () => 'sk_stored', fetchWhoami, saveKey, prompt: { ...PROMPT, secret } });
 
     expect(await runInit(d)).toBe(0);
-    expect(choose).toHaveBeenCalled();
+    expect(fetchWhoami).toHaveBeenCalledWith('https://example.test/api', 'sk_stored');
+    expect(secret).not.toHaveBeenCalled();
+    expect(saveKey).not.toHaveBeenCalled();
+    expect(out.join('\n')).toMatch(/Project: Acme, default locale en-US; locales: en-US, it-IT/);
+    await expect(loadConfig(cwd)).resolves.toMatchObject({ locales: { en_US: 'en-US' } });
+  });
+
+  it('asks for a key when none is stored, checks it, saves it, never echoes it', async () => {
+    const cwd: string = await tree({ 'locales/en/common.json': '{}' });
+    const fetchWhoami = vi.fn().mockResolvedValue(WHOAMI);
+    const saveKey = vi.fn().mockResolvedValue(SAVED);
+    const { d, out } = deps(cwd, { fetchWhoami, saveKey, prompt: { ...PROMPT, secret: async () => '  sk_typedvalue \n' } });
+
+    expect(await runInit(d)).toBe(0);
+    expect(fetchWhoami).toHaveBeenCalledWith('https://example.test/api', 'sk_typedvalue');
+    expect(saveKey).toHaveBeenCalledWith('sk_typedvalue');
+    const text: string = out.join('\n');
+    expect(text).toContain(`Logged in to Acme (acme) with scopes PULL, PUSH. Saved to ${SAVED}.`);
+    expect(text).not.toContain('sk_typedvalue');
+    expect(text).toContain('Wrote translify.json.');
+    expect(text).not.toContain('run `translify login`');
+    // The suggested map came from whoami.
+    await expect(loadConfig(cwd)).resolves.toMatchObject({ locales: { en: 'en-US' } });
+  });
+
+  it('skips whoami on an empty key, saves nothing, and still writes the config', async () => {
+    const cwd: string = await tree({ 'locales/en/common.json': '{}' });
+    const fetchWhoami = vi.fn();
+    const saveKey = vi.fn();
+    const { d, out } = deps(cwd, { fetchWhoami, saveKey });
+
+    expect(await runInit(d)).toBe(0);
+    expect(fetchWhoami).not.toHaveBeenCalled();
+    expect(saveKey).not.toHaveBeenCalled();
+    expect(out.at(-1)).toMatch(/run `translify login` or set TRANSLIFY_SECRET_KEY/);
+    await expect(loadConfig(cwd)).resolves.toMatchObject({ locales: {} });
+  });
+
+  it('throws exit 2 on a rejected typed key, saving and writing nothing', async () => {
+    const cwd: string = await tree({ 'locales/en/common.json': '{}' });
+    const saveKey = vi.fn();
+    const { d } = deps(cwd, { fetchWhoami: async () => Promise.reject(rejected()), saveKey, prompt: { ...PROMPT, secret: async () => 'sk_bad' } });
+
+    await expect(runInit(d)).rejects.toMatchObject({ exitCode: 2 });
+    expect(saveKey).not.toHaveBeenCalled();
+    await notWritten(cwd);
+  });
+
+  it('refuses a pk_ or malformed typed key before any request', async () => {
+    for (const typed of ['pk_public', 'sk_…', 'garbage']) {
+      const cwd: string = await tree({ 'locales/en/common.json': '{}' });
+      const fetchWhoami = vi.fn();
+      const { d } = deps(cwd, { fetchWhoami, prompt: { ...PROMPT, secret: async () => typed } });
+
+      await expect(runInit(d)).rejects.toMatchObject({ exitCode: 2 });
+      expect(fetchWhoami).not.toHaveBeenCalled();
+      await notWritten(cwd);
+    }
+  });
+
+  it('warns and continues when the stored key is rejected or the server is unreachable', async () => {
+    const cwd: string = await tree({ 'locales/en/common.json': '{}' });
+    const { d, out } = deps(cwd, { findKey: async () => 'sk_stored', fetchWhoami: async () => Promise.reject(rejected()) });
+    expect(await runInit(d)).toBe(0);
+    expect(out.join('\n')).toContain('Stored key was rejected; run `translify login`. Continuing without project info.');
+    await expect(loadConfig(cwd)).resolves.toMatchObject({ locales: {} });
+
+    const down: string = await tree({ 'locales/en/common.json': '{}' });
+    const net = deps(down, { findKey: async () => 'sk_stored', fetchWhoami: async () => Promise.reject(new CliError(EXIT.network, 'Could not connect.')) });
+    expect(await runInit(net.d)).toBe(0);
+    expect(net.out.join('\n')).toContain('Could not reach Translify (Could not connect.). Continuing without project info.');
+  });
+
+  it('propagates a malformed stored key (exit 2) and writes nothing, also under --yes', async () => {
+    const cwd: string = await tree({ 'locales/en/common.json': '{}' });
+    const findKey = async (): Promise<string> => Promise.reject(new CliError(EXIT.auth, 'The key has characters a secret key never has.'));
+
+    await expect(runInit(deps(cwd, { findKey }).d)).rejects.toMatchObject({ exitCode: 2 });
+    await expect(runInit(deps(cwd, { findKey, yes: true }).d)).rejects.toMatchObject({ exitCode: 2 });
+    await notWritten(cwd);
+  });
+});
+
+describe('runInit: several layouts', () => {
+  it('offers a multi-select with every rule and prints what was dropped', async () => {
+    const cwd: string = await tree({ 'locales/en/common.json': '{}', 'public/locales/fr/common.json': '{}' });
+    const checkbox = vi.fn().mockResolvedValue(['public/locales/{locale}/{namespace}.json']);
+    const { d, out } = deps(cwd, { prompt: { ...PROMPT, checkbox } });
+
+    expect(await runInit(d)).toBe(0);
+    expect(checkbox).toHaveBeenCalledWith('Which layouts hold your translations?', [
+      'locales/{locale}/{namespace}.json',
+      'public/locales/{locale}/{namespace}.json',
+    ]);
     expect(out.join('\n')).toMatch(/Dropped: locales\/\{locale\}/);
     await expect(loadConfig(cwd)).resolves.toMatchObject({ files: [{ pattern: 'public/locales/{locale}/{namespace}.json' }] });
   });
 
-  it('rejects a bad apiUrl and writes nothing', async () => {
-    const cwd: string = await tree({ 'locales/en/a.json': '{}' });
-    const { d } = deps(cwd, { prompt: { input: async () => 'not a url', confirm: async () => true, choose: async () => '' } });
+  it('keeps every rule when all stay checked, and fails when none is', async () => {
+    const both: string = await tree({ 'locales/en/common.json': '{}', 'lib/l10n/app_en.arb': '{}' });
+    expect(await runInit(deps(both).d)).toBe(0);
+    await expect(loadConfig(both)).resolves.toMatchObject({ files: [{ format: 'json' }, { format: 'arb' }] });
 
+    const none: string = await tree({ 'locales/en/common.json': '{}', 'lib/l10n/app_en.arb': '{}' });
+    const { d, out } = deps(none, { prompt: { ...PROMPT, checkbox: async () => [] } });
     expect(await runInit(d)).toBe(1);
-    await expect(readFile(join(cwd, 'translify.json'), 'utf8')).rejects.toThrow();
+    expect(out.at(-1)).toBe('Nothing selected. Nothing was written.');
+    await notWritten(none);
   });
 
-  it('needs a TTY and does not prompt without one', async () => {
+  it('labels dialect rules with their dialect', async () => {
+    const cwd: string = await tree({ 'locales/en/common.json': '{}', 'App/Localizable.xcstrings': '{}' });
+    const checkbox = vi.fn(async (_m: string, options: string[]) => options);
+    expect(await runInit(deps(cwd, { prompt: { ...PROMPT, checkbox } }).d)).toBe(0);
+    expect(checkbox.mock.calls[0]?.[1]).toEqual(['locales/{locale}/{namespace}.json', 'Localization/{locale}.xliff (xcode)']);
+  });
+});
+
+describe('runInit: --yes', () => {
+  it('writes with no prompt, no TTY, every rule and the suggested map', async () => {
+    const cwd: string = await tree({ 'locales/en/common.json': '{}', 'lib/l10n/app_en.arb': '{}' });
+    const prompt: InitDeps['prompt'] = { input: vi.fn(), confirm: vi.fn(), checkbox: vi.fn(), secret: vi.fn() };
+    const { d, out } = deps(cwd, { yes: true, isTty: false, prompt, findKey: async () => 'sk_stored' });
+
+    expect(await runInit(d)).toBe(0);
+    for (const fn of Object.values(prompt)) expect(fn).not.toHaveBeenCalled();
+    expect(out.join('\n')).toContain('"$schema"');
+    await expect(loadConfig(cwd)).resolves.toMatchObject({
+      apiUrl: 'https://example.test/api',
+      files: [{ format: 'json' }, { format: 'arb' }],
+      locales: { en: 'en-US' },
+    });
+  });
+
+  it('skips whoami under --yes when there is no key', async () => {
+    const cwd: string = await tree({ 'locales/en/common.json': '{}' });
+    const fetchWhoami = vi.fn();
+    const { d, out } = deps(cwd, { yes: true, fetchWhoami });
+
+    expect(await runInit(d)).toBe(0);
+    expect(fetchWhoami).not.toHaveBeenCalled();
+    expect(out.at(-1)).toMatch(/TRANSLIFY_SECRET_KEY/);
+  });
+
+  it('needs a TTY without --yes, names the flag, and does not prompt', async () => {
     const cwd: string = await tree({});
     const input = vi.fn();
-    const { d, out } = deps(cwd, { isTty: false, prompt: { input, confirm: vi.fn(), choose: vi.fn() } });
+    const { d, out } = deps(cwd, { isTty: false, prompt: { ...PROMPT, input } });
 
     expect(await runInit(d)).toBe(1);
     expect(input).not.toHaveBeenCalled();
-    expect(out.join('\n')).toMatch(/terminal/);
+    expect(out.join('\n')).toContain('Pass `--yes`');
+    await notWritten(cwd);
   });
 });

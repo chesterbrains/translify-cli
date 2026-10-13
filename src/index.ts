@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { confirm, input, password, select } from '@inquirer/prompts';
+import { checkbox, confirm, input, password } from '@inquirer/prompts';
 import { Command, Option } from 'commander';
 
 import { runInit, type WhoamiInfo } from './commands/init.js';
@@ -10,7 +10,7 @@ import { runPull, type PullOptions } from './commands/pull.js';
 import { PUSH_STATUSES, runPush, type PushOptions } from './commands/push.js';
 import { loadConfig, type Config } from './config.js';
 import { askConfirm } from './confirm.js';
-import { resolveKey } from './credentials.js';
+import { findKey, resolveKey, saveKey } from './credentials.js';
 import { CliError, EXIT } from './errors.js';
 import { Api } from './http.js';
 import { VERSION } from './version.js';
@@ -50,30 +50,32 @@ const program: Command = new Command('translify')
 program
   .command('init')
   .description('Create translify.json for this repository')
-  .action(async () => {
+  .option('-y, --yes', 'no prompts: take the detected defaults; the key comes from TRANSLIFY_SECRET_KEY or a previous login; never overwrites')
+  .option('--api-url <url>', `Translify API URL (default: ${DEFAULT_API_URL})`)
+  .action(async (opts: { yes?: boolean; apiUrl?: string }) => {
     process.exitCode = await runInit({
       cwd: process.cwd(),
       isTty,
-      out,
+      yes: opts.yes === true,
+      apiUrl: opts.apiUrl,
       apiUrlDefault: DEFAULT_API_URL,
+      out,
       prompt: {
         input: async (message, defaultValue) =>
           guarded(async () => input({ message, default: defaultValue }, { output: process.stderr }), ''),
         confirm: async (message, defaultValue) =>
           guarded(async () => confirm({ message, default: defaultValue }, { output: process.stderr }), false),
-        choose: async (message, options) =>
+        checkbox: async (message, options) =>
           guarded(
-            async () => select({ message, choices: options.map((value) => ({ value })) }, { output: process.stderr }),
-            options[0] ?? '',
+            async () => checkbox({ message, choices: options.map((value) => ({ value, checked: true })) }, { output: process.stderr }),
+            options,
           ),
+        // Ctrl+C here is "skip": init goes on without project info.
+        secret: async (message) => guarded(async () => password({ message, mask: '*' }, { output: process.stderr }), ''),
       },
-      fetchWhoami: async (apiUrl: string): Promise<WhoamiInfo | undefined> => {
-        try {
-          return await new Api(apiUrl, await resolveKey()).get<WhoamiInfo>('/cli/v1/whoami');
-        } catch {
-          return undefined;
-        }
-      },
+      findKey: async () => findKey(),
+      saveKey: async (key) => saveKey(key),
+      fetchWhoami: async (apiUrl, key) => new Api(apiUrl, key).get<WhoamiInfo>('/cli/v1/whoami'),
     });
   });
 

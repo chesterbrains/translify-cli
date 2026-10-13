@@ -47,7 +47,7 @@ In Translify, open your project's API keys, create a **secret key** (it starts w
 Give the key to the CLI in one of two ways:
 
 - set `TRANSLIFY_SECRET_KEY` (always wins; use this in CI), or
-- run `translify login` and paste it. It is stored in `~/.config/translify/credentials` (or under `$XDG_CONFIG_HOME`).
+- run `translify login` (or let `translify init` ask for it) and paste it. It is stored in `~/.config/translify/credentials` (or under `$XDG_CONFIG_HOME`).
 
 Never commit a key. Delivery keys (public keys used by apps to download published translations) do not work here.
 
@@ -61,7 +61,7 @@ locales/
 
 ```bash
 export TRANSLIFY_SECRET_KEY=sk_...
-npx translify init            # detects your layout, writes translify.json
+npx translify init            # detects your layout, asks for your key, writes translify.json
 npx translify push --dry-run  # show what would change, write nothing
 npx translify push
 npx translify pull
@@ -128,6 +128,8 @@ server converts both ways:
 { "files": [{ "pattern": "src/locale/messages.{locale}.xlf", "format": "xliff", "namespace": "web", "xliffDialect": "angular" }] }
 ```
 
+`translify init` reads `angular.json` and writes this rule for you (one per distinct translation path, namespace = project name); `ng extract-i18n` must be run with `--format=xlf2 --out-file messages.<sourceLocale>.xlf` so the source file matches it.
+
 Give every template string `i18n="@@<key>"` so the unit ids are your keys. A translation file's `trgLang` must be the
 Translify locale code: with `"locales": { "it": "it-IT" }` the file is still `messages.it.xlf`, but it declares
 `trgLang="it-IT"`, or `push` is refused with `File targets it but it-IT was requested`. What `pull` writes:
@@ -170,6 +172,8 @@ iOS translations get placeholder validation (Xcode's own import accepts a target
 { "files": [{ "pattern": "Localization/{locale}.xliff", "format": "xliff", "namespace": "ios",
               "xliffDialect": "xcode", "xliffOriginal": "Sources/App/Localizable.xcstrings" }] }
 ```
+
+`translify init` finds every `.xcstrings` and writes this rule for you (namespace = catalog name, `xliffOriginal` = its path; `Localization/{locale}.xliff` unless locale-named `.xliff` files already sit in one folder).
 
 Workflow:
 
@@ -228,7 +232,7 @@ otherwise the CLI stops before sending anything and names the files involved.
 
 | Command | What it does |
 |---|---|
-| `translify init` | Create `translify.json` (interactive) |
+| `translify init` | Create `translify.json`: detects i18next, Flutter, Angular and Xcode layouts, asks for your key (interactive, or `--yes`) |
 | `translify login` | Store a secret key on this machine (interactive) |
 | `translify push` | Upload source and target files |
 | `translify pull` | Download translation files |
@@ -238,6 +242,7 @@ otherwise the CLI stops before sending anything and names the files involved.
 
 Options:
 
+- `init`: `-y/--yes` (no prompts: every detected rule, the suggested locale map, the key from `TRANSLIFY_SECRET_KEY` or a previous login; fails instead of overwriting), `--api-url <url>`
 - `push`: `--dry-run`, `--overwrite-targets`, `--prune`, `-y/--yes`, `--namespace <ns>`, `--status <draft|needs-review|approved>`
 - `pull` and `status`: `--from <working|env:slug>`, `--locale <locale>` (as named on disk), `--namespace <ns>`, `--only-approved`
 - `publish`: `--fail-on-withheld`, `--allow-errors`
