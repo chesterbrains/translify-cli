@@ -50,6 +50,7 @@ jobs:
         run: npx -y translify push --dry-run 2>&1 | tee push.txt
         env:
           TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
+          NO_COLOR: 1 # the CLI colours its output on CI; the comment wants plain text
       - name: Comment on the pull request
         uses: actions/github-script@v7
         env:
