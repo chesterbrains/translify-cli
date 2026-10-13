@@ -1,4 +1,5 @@
-import { posix } from 'node:path';
+import { readdir } from 'node:fs/promises';
+import { join, posix } from 'node:path';
 import fg from 'fast-glob';
 
 import type { FileRule } from '../config.js';
@@ -42,6 +43,25 @@ const namespaces = (catalogs: string[], notes: string[]): string[] => {
   });
 };
 
+const PROJECT_MARKER: RegExp = /\.(xcodeproj|xcworkspace)$|^Package\.swift$/;
+
+/**
+ * The directory Xcode resolves `<file original>` against: the nearest ancestor of the catalog (at or
+ * below `cwd`) holding an `.xcodeproj`, `.xcworkspace` or `Package.swift`; `.` when there is none.
+ */
+const projectRoot = async (cwd: string, catalog: string): Promise<string> => {
+  for (let dir: string = posix.dirname(catalog); ; dir = posix.dirname(dir)) {
+    let entries: string[];
+    try {
+      entries = await readdir(join(cwd, dir));
+    } catch {
+      entries = [];
+    }
+    if (entries.some((entry) => PROJECT_MARKER.test(entry))) return dir;
+    if (dir === '.') return dir;
+  }
+};
+
 const rule = (pattern: string, namespace: string, original: string): FileRule => ({
   pattern,
   format: 'xliff',
@@ -58,6 +78,15 @@ export async function detectXcode(cwd: string): Promise<Detection> {
 
   const notes: string[] = [];
   const names: string[] = namespaces(catalogs, notes);
+  const originals: string[] = [];
+  const roots: Set<string> = new Set();
+  for (const catalog of catalogs) {
+    const root: string = await projectRoot(cwd, catalog);
+    originals.push(root === '.' ? catalog : posix.relative(root, catalog));
+    if (root !== '.') roots.add(root);
+  }
+  for (const root of roots) notes.push(`Xcode project in ${root}/: xliffOriginal is relative to it, as Xcode expects.`);
+
   if (catalogs.length === 1) {
     const dir: string | undefined = await existingDir(cwd);
     const pattern: string = dir === undefined ? 'Localization/{locale}.xliff' : dir === '.' ? '{locale}.xliff' : `${dir}/{locale}.xliff`;
@@ -65,11 +94,13 @@ export async function detectXcode(cwd: string): Promise<Detection> {
       notes.push('No XLIFF files yet: `translify pull` creates Localization/<locale>.xliff; `xcodebuild -importLocalizations` reads them.');
     }
 
-    return { rules: [rule(pattern, names[0] ?? 'strings', only)], notes };
+    return { rules: [rule(pattern, names[0] ?? 'strings', originals[0] ?? only)], notes };
   }
 
   return {
-    rules: catalogs.map((catalog, index) => rule(`Localization/${names[index] ?? 'strings'}/{locale}.xliff`, names[index] ?? 'strings', catalog)),
+    rules: catalogs.map((catalog, index) =>
+      rule(`Localization/${names[index] ?? 'strings'}/{locale}.xliff`, names[index] ?? 'strings', originals[index] ?? catalog),
+    ),
     notes: ['Several String Catalogs: each gets its own folder under Localization/, created by `translify pull`.', ...notes],
   };
 }

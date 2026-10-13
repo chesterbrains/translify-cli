@@ -96,4 +96,13 @@ describe('detectAngular', () => {
     const cwd: string = await tree({ 'angular.json': angularJson({ '---': { i18n: { locales: { it: 'src/locale/messages.it.xlf' } } } }) });
     expect((await detectAngular(cwd)).rules[0]?.namespace).toBe('app');
   });
+
+  it('does not split a regional file name on a bare language code', async () => {
+    const cwd: string = await tree({
+      'angular.json': angularJson({ app: { i18n: { locales: { pt: 'src/locale/messages.pt-BR.xlf', it: 'src/locale/messages.it.xlf' } } } }),
+    });
+    const { rules, notes } = await detectAngular(cwd);
+    expect(rules).toEqual([{ ...RULE, pattern: 'src/locale/messages.{locale}.xlf', namespace: 'app' }]);
+    expect(notes).toContain('src/locale/messages.pt-BR.xlf does not contain its locale code pt; add that rule by hand.');
+  });
 });

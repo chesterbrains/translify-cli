@@ -27,9 +27,12 @@ const firstPath = (value: Translation): string | undefined => {
 
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** The last occurrence of `code` bounded by non-alphanumerics, so `es` in `resources/` is not it. */
+/**
+ * The last occurrence of `code` bounded by non-alphanumerics, so `es` in `resources/` is not it, and
+ * not the language part of a regional name (`pt` in `messages.pt-BR.xlf`), which would split the file.
+ */
 const toPattern = (path: string, code: string): string | undefined => {
-  const bounded: RegExp = new RegExp(`(?<![A-Za-z0-9])${escape(code)}(?![A-Za-z0-9])`, 'g');
+  const bounded: RegExp = new RegExp(`(?<![A-Za-z0-9])${escape(code)}(?![A-Za-z0-9]|[-_][A-Za-z0-9])`, 'g');
   const matches: RegExpExecArray[] = [...path.matchAll(bounded)];
   const last: RegExpExecArray | undefined = matches.at(-1);
   if (last === undefined) return undefined;

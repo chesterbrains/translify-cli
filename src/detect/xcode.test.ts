@@ -83,4 +83,17 @@ describe('detectXcode', () => {
       'Two catalogs are named Localizable.xcstrings: the second one is namespace localizable-2.',
     ]);
   });
+
+  it('writes xliffOriginal relative to the Xcode project or package that owns the catalog, and says so', async () => {
+    const app: string = await tree({ 'ios/Runner.xcodeproj/project.pbxproj': '', 'ios/Runner/Localizable.xcstrings': '{}' });
+    const { rules, notes } = await detectXcode(app);
+    expect(rules[0]).toMatchObject({ xliffOriginal: 'Runner/Localizable.xcstrings' });
+    expect(notes).toContain('Xcode project in ios/: xliffOriginal is relative to it, as Xcode expects.');
+
+    const pkg: string = await tree({ 'packages/Core/Package.swift': '', 'packages/Core/Sources/Core/Localizable.xcstrings': '{}' });
+    expect((await detectXcode(pkg)).rules[0]).toMatchObject({ xliffOriginal: 'Sources/Core/Localizable.xcstrings' });
+
+    const workspace: string = await tree({ 'App.xcworkspace/contents.xcworkspacedata': '', 'App/Localizable.xcstrings': '{}' });
+    expect((await detectXcode(workspace)).rules[0]).toMatchObject({ xliffOriginal: 'App/Localizable.xcstrings' });
+  });
 });
