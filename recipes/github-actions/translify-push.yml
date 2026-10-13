@@ -70,7 +70,9 @@ jobs:
               output,
               '```',
               '',
-              `Nothing was written. Merging will run \`translify push\` for real.`,
+              ok
+                ? 'Nothing was written. Merging will run `translify push` for real.'
+                : 'The dry run failed, so merging would fail the same way. Fix it first.',
             ].join('\n');
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
