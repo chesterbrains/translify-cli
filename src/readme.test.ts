@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
@@ -50,5 +50,15 @@ describe('README', () => {
     ];
 
     expect(documented.toSorted()).toEqual(fields.toSorted());
+  });
+
+  it('links every GitHub Actions recipe from the CI section', () => {
+    const ci: string = section('CI (GitHub Actions)');
+    const recipes: string[] = readdirSync(new URL('../recipes/github-actions', import.meta.url)).filter((name) => name.endsWith('.yml'));
+
+    expect(recipes.length).toBeGreaterThan(0);
+    for (const recipe of recipes) {
+      expect(ci, recipe).toContain(`https://github.com/chesterbrains/translify-cli/blob/main/recipes/github-actions/${recipe}`);
+    }
   });
 });

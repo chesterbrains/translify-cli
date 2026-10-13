@@ -302,48 +302,34 @@ When the project has **Require review** turned on in Translify:
 
 ## CI (GitHub Actions)
 
-Store the key in the repository secrets as `TRANSLIFY_SECRET_KEY`.
+Store the key in the repository secrets as `TRANSLIFY_SECRET_KEY`. Two ready-made workflows live in
+[`recipes/github-actions/`](https://github.com/chesterbrains/translify-cli/tree/main/recipes/github-actions); copy the
+one you need to `.github/workflows/` as it is.
 
-Push on main:
+- [`translify-push.yml`](https://github.com/chesterbrains/translify-cli/blob/main/recipes/github-actions/translify-push.yml)
+  runs `push --dry-run` on every pull request and keeps its output in one comment on the PR, updated on each push to the
+  branch (a refused push lands there too and fails the job); on `main` it pushes for real, with an optional `publish`
+  step. Key scope: `PUSH` (and `PUBLISH` for the optional step). Pull requests from forks are skipped: they have no
+  access to secrets.
+- [`translify-release.yml`](https://github.com/chesterbrains/translify-cli/blob/main/recipes/github-actions/translify-release.yml)
+  is for apps that bundle translations at build time: `lint`, then `pull`, your build, then `publish` to the environment
+  chosen in the Actions tab (or on a tag). Key scopes: `PULL` and `PUBLISH`.
 
-```yaml
-name: Translify push
-on:
-  push:
-    branches: [main]
-jobs:
-  push:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npx translify push
-        env:
-          TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
-```
+Both use `npx -y translify`, so they follow every 0.x release; pin a version (`npx -y @chesterbrains/translify-cli@0.6`) if a breaking
+release must not turn the workflow red on its own.
 
 Fail a pull request when local files drift from Translify:
 
 ```yaml
-name: Translify status
-on: pull_request
-jobs:
-  status:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npx translify status
-        env:
-          TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
+- run: npx -y translify status
+  env:
+    TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
 ```
 
 Fail CI when translations in Translify have placeholder errors:
 
 ```yaml
-- run: npx translify lint --max-warnings 0
+- run: npx -y translify lint --max-warnings 0
   env:
     TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
 ```
@@ -351,20 +337,6 @@ Fail CI when translations in Translify have placeholder errors:
 `lint` checks what is stored in Translify, not your local files; run it after `push`, or before `pull`/`publish` on deploy.
 It covers what this repository pulls: only the namespaces of fixed-`namespace` rules, or the whole
 project when a rule uses `{namespace}`. It needs a key with the `pull` scope.
-
-Pull and publish on deploy:
-
-```yaml
-- run: npx translify lint
-  env:
-    TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
-- run: npx translify pull
-  env:
-    TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
-- run: npx translify publish production
-  env:
-    TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
-```
 
 ## Exit codes
 

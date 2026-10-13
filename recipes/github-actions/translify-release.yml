@@ -1,0 +1,55 @@
+# Translify: pull, build and publish on release.
+#
+# For apps that bundle translations at build time (Flutter ARB, Angular or
+# Xcode XLIFF, i18next JSON loaded from the bundle). Copy this file to
+# .github/workflows/translify-release.yml and store a secret key with the PULL
+# and PUBLISH scopes in the repository secrets as TRANSLIFY_SECRET_KEY.
+#
+# Run it from the Actions tab (choose the environment), or trigger it on a tag.
+# `lint` fails the run before anything is built when a translation in Translify
+# has a placeholder error; `pull` writes the files the build reads (they are not
+# committed); `publish` makes the same translations live for apps that load them
+# at runtime. Pin the CLI (`npx -y @chesterbrains/translify-cli@0.6`) if a breaking 0.x release must
+# not turn this workflow red on its own.
+name: Translify release
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Translify environment to publish
+        required: true
+        default: production
+  # Or on a tag:
+  # push:
+  #   tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
+      # `inputs.environment` is empty on a tag push: fall back to production.
+      TRANSLIFY_ENVIRONMENT: ${{ inputs.environment || 'production' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      # Stop before the build when a translation has a placeholder error (exit 6).
+      # `--max-warnings 0` also fails on warnings such as a missing plural form.
+      - run: npx -y translify lint
+      - run: npx -y translify pull
+      # `pull --only-approved` leaves out translations that were never approved, for
+      # a project that requires review; `pull --from env:production` builds from what
+      # that environment already publishes instead of the working copy.
+
+      # Your build goes here, e.g.:
+      # - run: flutter gen-l10n && flutter build web
+      # - run: npx ng build --localize
+
+      - run: npx -y translify publish "$TRANSLIFY_ENVIRONMENT"
+      # `--fail-on-withheld` exits 5 after publishing when the environment's review gate
+      # withheld translations; `--allow-errors` publishes despite placeholder errors.

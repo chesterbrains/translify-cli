@@ -1,0 +1,101 @@
+# Translify: preview on pull requests, push on main.
+#
+# Copy this file to .github/workflows/translify-push.yml and store a secret key
+# with the PUSH scope (PUBLISH too if you enable the publish step) in the
+# repository secrets as TRANSLIFY_SECRET_KEY.
+#
+# - On a pull request, `translify push --dry-run` runs and its output lands in
+#   one comment on the PR, updated on every push to the branch. A refused push
+#   (for example VALIDATION_FAILED) also lands there, and the job fails.
+# - On main, the same files are pushed for real.
+#
+# Pull requests from forks have no access to secrets, so they are skipped.
+# Pin the CLI (`npx -y @chesterbrains/translify-cli@0.6`) if a breaking 0.x release must not turn
+# this workflow red on its own.
+name: Translify push
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Only when translations change:
+  # pull_request:
+  #   paths: ['locales/**', 'translify.json']
+  # push:
+  #   branches: [main]
+  #   paths: ['locales/**', 'translify.json']
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: translify-push-${{ github.ref }}
+  # A newer push to a PR supersedes the preview; a real push to main is never cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  preview:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Dry run
+        id: dry-run
+        # The output is kept for the comment; a failed dry run still gets commented, then fails the job below.
+        continue-on-error: true
+        shell: bash
+        run: npx -y translify push --dry-run 2>&1 | tee push.txt
+        env:
+          TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
+      - name: Comment on the pull request
+        uses: actions/github-script@v7
+        env:
+          OUTCOME: ${{ steps.dry-run.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- translify-push -->';
+            const limit = 60000; // a comment body holds 65536 characters
+            let output = fs.readFileSync('push.txt', 'utf8').trim();
+            if (output.length > limit) output = output.slice(0, limit) + '\n… (truncated)';
+            const ok = process.env.OUTCOME === 'success';
+            const body = [
+              marker,
+              `### ${ok ? '✅' : '❌'} Translify push (dry run)`,
+              '',
+              '```text',
+              output,
+              '```',
+              '',
+              `Nothing was written. Merging will run \`translify push\` for real.`,
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+            const existing = comments.find((comment) => comment.body && comment.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+      - name: Fail when the dry run failed
+        if: steps.dry-run.outcome == 'failure'
+        run: exit 1
+
+  push:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npx -y translify push
+        env:
+          TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
+      # Optional: publish right after the push. Needs the PUBLISH scope on the key.
+      # - run: npx -y translify publish production
+      #   env:
+      #     TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
