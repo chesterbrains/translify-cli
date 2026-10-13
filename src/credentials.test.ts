@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { credentialsPath, resolveKey, saveKey } from './credentials.js';
+import { credentialsPath, findKey, resolveKey, saveKey } from './credentials.js';
 import { CliError } from './errors.js';
 
 const tempEnv = async (): Promise<{ XDG_CONFIG_HOME: string }> => ({
@@ -93,5 +93,17 @@ describe('credentials', () => {
 
   it('refuses to save a non-secret key', async () => {
     await expect(saveKey('pk_x', await tempEnv())).rejects.toThrow(/pk_ keys are for delivery/);
+  });
+
+  it('findKey returns undefined when there is no key anywhere', async () => {
+    expect(await findKey(await tempEnv())).toBeUndefined();
+  });
+
+  it('findKey returns the env var, else the saved key, and still refuses a malformed one', async () => {
+    const env = await tempEnv();
+    expect(await findKey({ ...env, TRANSLIFY_SECRET_KEY: 'sk_env' })).toBe('sk_env');
+    await saveKey('sk_saved', env);
+    expect(await findKey(env)).toBe('sk_saved');
+    await expect(findKey({ ...env, TRANSLIFY_SECRET_KEY: 'sk_…' })).rejects.toMatchObject({ exitCode: 2 });
   });
 });

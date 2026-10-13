@@ -39,7 +39,8 @@ export const assertSecret = (key: string): string => {
   return key;
 };
 
-export async function resolveKey(env: Env = process.env): Promise<string> {
+/** The key this machine has (env var first, then the credentials file), or undefined. Malformed values throw. */
+export async function findKey(env: Env = process.env): Promise<string | undefined> {
   const fromEnv: string | undefined = env.TRANSLIFY_SECRET_KEY?.trim();
   if (fromEnv) return assertSecret(fromEnv);
 
@@ -47,11 +48,17 @@ export async function resolveKey(env: Env = process.env): Promise<string> {
   try {
     stored = (await readFile(credentialsPath(env), 'utf8')).trim();
   } catch {
-    throw new CliError(EXIT.auth, 'No key. Set TRANSLIFY_SECRET_KEY or run `translify login`.');
+    return undefined;
   }
-  if (stored === '') throw new CliError(EXIT.auth, 'No key. Set TRANSLIFY_SECRET_KEY or run `translify login`.');
 
-  return assertSecret(stored);
+  return stored === '' ? undefined : assertSecret(stored);
+}
+
+export async function resolveKey(env: Env = process.env): Promise<string> {
+  const key: string | undefined = await findKey(env);
+  if (key === undefined) throw new CliError(EXIT.auth, 'No key. Set TRANSLIFY_SECRET_KEY or run `translify login`.');
+
+  return key;
 }
 
 export async function saveKey(key: string, env: Env = process.env): Promise<string> {
