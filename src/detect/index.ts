@@ -1,10 +1,11 @@
+import { detectAngular } from './angular.js';
 import { detectFlutter } from './flutter.js';
 import { detectI18next } from './i18next.js';
 import type { Detection, Detector } from './shared.js';
 
 export type { Detection, Detector } from './shared.js';
 
-const DETECTORS: Detector[] = [detectI18next, detectFlutter];
+const DETECTORS: Detector[] = [detectI18next, detectFlutter, detectAngular];
 
 /** Looks only in `cwd`. An empty `rules` list means "unknown, write an example". */
 export async function detectLayout(cwd: string): Promise<Detection> {
