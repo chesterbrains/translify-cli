@@ -13,4 +13,20 @@ describe('suggestLocaleMap', () => {
     expect(suggestLocaleMap(['en_US', 'en-us'], ['en-US'])).toEqual({ en_US: 'en-US' });
     expect(suggestLocaleMap(['en_US', 'en-US'], ['en-US'])).toEqual({});
   });
+
+  it('maps a bare language to the only regional project locale', () => {
+    expect(suggestLocaleMap(['en', 'it'], ['en-US', 'it-IT'])).toEqual({ en: 'en-US', it: 'it-IT' });
+    expect(suggestLocaleMap(['EN'], ['en-US'])).toEqual({ EN: 'en-US' });
+  });
+
+  it('leaves a bare language alone when the project has it, or has several regions', () => {
+    expect(suggestLocaleMap(['en'], ['en', 'en-US'])).toEqual({});
+    expect(suggestLocaleMap(['en'], ['en-US', 'en-GB'])).toEqual({});
+    expect(suggestLocaleMap(['en'], ['fr-FR'])).toEqual({});
+  });
+
+  it('does not give a bare language a target another disk locale already took', () => {
+    expect(suggestLocaleMap(['en_US', 'en'], ['en-US'])).toEqual({ en_US: 'en-US' });
+    expect(suggestLocaleMap(['en', 'en-US'], ['en-US'])).toEqual({});
+  });
 });
