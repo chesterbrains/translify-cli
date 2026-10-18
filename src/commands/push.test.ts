@@ -23,7 +23,7 @@ const DIGEST = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 const response = (over: Partial<PushResponse> = {}): PushResponse => ({
   dryRun: true,
   locales: { en: counts({ created: 1 }) },
-  orphans: [{ namespace: 'cart', key: 'old', published: false }],
+  orphans: [{ namespace: 'cart', key: 'old' }],
   pruned: 0,
   pruneDigest: DIGEST,
   ...over,
@@ -161,7 +161,7 @@ describe('runPush', () => {
     confirm.mockResolvedValue(false);
     const code = await runPush({ prune: true }, { ...deps, isTty: true });
 
-    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/delete 1 key/i));
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/move 1 key\(s\) and their translations to the trash/));
     expect(code).toBe(1);
     expect(post).toHaveBeenCalledTimes(1);
   });
@@ -235,42 +235,34 @@ describe('runPush', () => {
     expect(formOf(post, 1).get('prune')).toBe('false');
   });
 
-  const mixed = (): PushResponse =>
-    response({
-      pruned: 2,
+  it('the confirmation counts every orphan, live ones included, and lists them', async () => {
+    const preview: PushResponse = response({
       orphans: [
-        { namespace: 'cart', key: 'old', published: false },
-        { namespace: 'cart', key: 'live', published: true },
-        { namespace: 'home', key: 'gone', published: false },
+        { namespace: 'cart', key: 'old' },
+        { namespace: 'cart', key: 'live' },
+        { namespace: 'home', key: 'gone' },
       ],
     });
-
-  it('the confirmation counts and lists only unpublished orphans; published ones are shown as kept', async () => {
-    const { deps, confirm, err, out } = await setup(vi.fn().mockResolvedValue(mixed()));
+    const { deps, confirm, err, out } = await setup(vi.fn().mockResolvedValue(preview));
     confirm.mockResolvedValue(false);
     await runPush({ prune: true }, { ...deps, isTty: true });
 
-    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/delete 2 key\(s\)/));
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/move 3 key\(s\) and their translations to the trash/));
     const shown: string = text([...out, ...err]);
     expect(shown).toMatch(/cart:old$/m);
-    expect(shown).toMatch(/home:gone$/m);
-    expect(shown).toContain('1 key(s) kept — published; unpublish it in Translify to delete it:');
     expect(shown).toMatch(/cart:live$/m);
+    expect(shown).toMatch(/home:gone$/m);
+    expect(shown).not.toMatch(/published/);
   });
 
-  it('--prune with only published orphans asks nothing and pushes for real, reporting them kept', async () => {
-    const onlyPublished: PushResponse = response({
-      orphans: [{ namespace: 'cart', key: 'live', published: true }],
-    });
-    const { deps, post, confirm, out } = await setup(vi.fn().mockResolvedValue(onlyPublished));
+  it('--prune with no orphans asks nothing and pushes for real', async () => {
+    const { deps, post, confirm } = await setup(vi.fn().mockResolvedValue(response({ orphans: [] })));
     const code = await runPush({ prune: true }, { ...deps, isTty: true });
 
     expect(code).toBe(0);
     expect(confirm).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledTimes(2);
     expect(formOf(post, 1).get('dryRun')).toBe('false');
-    expect(formOf(post, 1).get('prune')).toBe('false');
-    expect(text(out)).toContain('kept — published; unpublish it in Translify to delete it');
   });
 
   it('--overwrite-targets counts only target-locale updates, and asks', async () => {

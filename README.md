@@ -257,34 +257,38 @@ Options:
 - **Source locale: your files win.** Existing source translations are overwritten with what is in the file.
 - **Target locales: Translify fills only the gaps.** Keys that already have a translation are left alone and counted as skipped.
 - `--overwrite-targets` also overwrites existing target translations.
-- `--prune` deletes keys that no longer exist in your source files, together with their translations. See [Prune safety](#prune-safety).
+- `--prune` moves keys that no longer exist in your source files to the Translify trash, together with their translations. They can be restored for 30 days. See [Prune safety](#prune-safety).
 - `--yes` skips the confirmation prompt for the two destructive flags. Without a terminal and without `--yes`, a destructive push is refused and nothing changes.
 - `--dry-run` shows the effect of any combination and writes nothing.
 
 ## Prune safety
 
-`translify push --prune` is the only command that deletes keys. What it deletes, and what stops it:
+`translify push --prune` is the only command that removes keys. It never deletes on the spot: it archives them. What
+it archives, and what stops it:
 
 - **Only the namespaces in this push.** A key is an orphan when its namespace is in the push and its source file no
   longer has it. Namespaces you did not push (another rule, another repository, `--namespace` left them out) are never
   touched.
-- **Never published keys.** A key published to any environment is listed as kept and survives. Unpublish it in
-  Translify first if it really should go.
+- **Archived, not deleted.** A pruned key goes to the trash in Translify, with its translations and their history.
+  It is deleted for good 30 days later. Until then, restore it from the trash on the project's Translations tab, or
+  push a source file that names it again: the push restores it in place and reports it as restored.
+- **Live keys too.** A key that is live in an environment is archived like any other, but the
+  environment keeps serving it until its next publish, which drops it. Restore it before then if it should stay.
 - **Never a whole namespace by accident.** If a source file in the push has no entries, the push is refused
-  (`VALIDATION_FAILED` with `emptySourcePrune`) instead of deleting every key in that namespace. Emptying a namespace
+  (`VALIDATION_FAILED` with `emptySourcePrune`) instead of archiving every key in that namespace. Emptying a namespace
   is done in the Translify web app.
-- **Exactly the list you confirmed.** The CLI always runs a dry run first, shows the keys it would delete and asks
+- **Exactly the list you confirmed.** The CLI always runs a dry run first, shows the keys it would archive and asks
   for confirmation. The real push sends a digest of that list; if the server's list differs by then (keys added,
-  removed or published in between), it refuses with `ORPHANS_CHANGED` and writes nothing. A server too old to return
+  removed, archived or restored in between), it refuses with `ORPHANS_CHANGED` and writes nothing. A server too old to return
   the digest makes `--prune` refuse.
 - **No silent prune in CI.** Without a terminal, `--prune` is refused unless you pass `--yes`.
-- **Atomic.** The whole push, deletions included, is one transaction: if anything fails, nothing is written.
+- **Atomic.** The whole push, archives and restores included, is one transaction: if anything fails, nothing is written.
 
 `--yes` confirms whatever that run's dry run lists, so in CI review the list before it runs unattended. One way:
 show the orphans on pull requests and prune on `main`.
 
 ```yaml
-# on pull_request: list what a prune would delete, change nothing
+# on pull_request: list what a prune would archive, change nothing
 - run: npx translify push --prune --dry-run
   env:
     TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
@@ -364,7 +368,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `VALIDATION_FAILED` | 1 | Nothing was written. The output lists `file:line key: reason`; fix those entries and push again. |
 | `LOCALE_NOT_FOUND` | 1 | A locale in your files is not enabled in the project. Enable it in Translify, or map it with `locales` in `translify.json`. |
 | `NAMESPACE_NOT_FOUND` | 1 | The namespace does not exist in the project. Create it in Translify or fix the `--namespace` / pattern. |
-| `VALIDATION_FAILED` with `emptySourcePrune` | 1 | `--prune` was refused because a source file in the push has no entries (it would delete the whole namespace). Push the real source file, or drop `--prune`; emptying a namespace is done in the Translify web app. |
+| `VALIDATION_FAILED` with `emptySourcePrune` | 1 | `--prune` was refused because a source file in the push has no entries (it would archive the whole namespace). Push the real source file, or drop `--prune`; emptying a namespace is done in the Translify web app. |
 | `JSON_STYLE_REQUIRES_JSON` | 1 | `jsonStyle` only applies to rules with `"format": "json"`. Remove it from the other rules. |
 | `BAD_REQUEST` | 1 | The request was malformed. Re-run with `--debug` for the server's message. |
 | `ENVIRONMENT_NOT_FOUND` / `ENVIRONMENT_ARCHIVED` | 1 | Check the environment slug passed to `publish` or `--from env:<slug>`, and that it is not archived. |
@@ -377,7 +381,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `QUOTA_EXCEEDED` | 3 | Your plan limit was reached (usually translation keys). Remove keys, or push a smaller set. |
 | `PUSH_TOO_LARGE` | 4 | Split the push by namespace: `translify push --namespace <ns>`. |
 | `CLI_TOO_OLD` | 4 | Upgrade: `npm i -g @chesterbrains/translify-cli@latest` (or use `npx translify@latest`). |
-| `ORPHANS_CHANGED` | 1 | The orphan list changed between the dry run and the real push (keys were added, removed or published). Nothing was written; run `translify push --prune` again to review the new list. |
+| `ORPHANS_CHANGED` | 1 | The orphan list changed between the dry run and the real push (keys were added, removed, archived or restored). Nothing was written; run `translify push --prune` again to review the new list. |
 | `REVIEW_DISABLED` | 1 | `push --status draft` or `--status needs-review` on a project without review. Turn on **Require review** in the project settings, or drop `--status`. Nothing was written. |
 | `APPROVED_ONLY_REQUIRES_WORKING` | 1 | `--only-approved` was combined with `--from env:<slug>`. Pull an environment without it; it already holds only what its gate allowed. |
 | `INVALID_CELLS` | 6 | `publish` refused: translations that would go live have placeholder errors. Nothing was published; the output lists them like `lint` does. Fix them in Translify, or re-run with `--allow-errors` to publish anyway (recorded in the activity log). |

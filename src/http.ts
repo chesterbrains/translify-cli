@@ -98,7 +98,7 @@ const describeBody = (status: number, body: ErrorBody): string => {
     case 'NAMESPACE_NOT_FOUND':
       return `Unknown namespace(s): ${list(body.namespaces)}.`;
     case 'ORPHANS_CHANGED':
-      return 'The orphans changed since the dry run (keys were added, removed or published meanwhile). Nothing was written. Run translify push --prune again to review the new list.';
+      return 'The orphans changed since the dry run (keys were added, removed, archived or restored meanwhile). Nothing was written. Run translify push --prune again to review the new list.';
     case 'REVIEW_DISABLED':
       return 'Review is off for this project, so --status draft or needs-review cannot be used. Turn on "Require review" in the project settings, or drop --status.';
     case 'APPROVED_ONLY_REQUIRES_WORKING':
