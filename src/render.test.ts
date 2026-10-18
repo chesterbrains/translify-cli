@@ -44,31 +44,31 @@ describe('renderPush', () => {
     expect(plain(base)).toMatch(/2 unknown key\(s\).*cart:old, cart:gone/);
   });
 
-  it('lists deletable orphans, shows published ones as kept, and hints --prune', () => {
+  it('lists orphans and hints --prune', () => {
     const output: string = plain({
       ...base,
       orphans: [
-        { namespace: 'cart', key: 'legacy', published: false },
-        { namespace: 'cart', key: 'live', published: true },
+        { namespace: 'cart', key: 'legacy' },
+        { namespace: 'cart', key: 'live' },
       ],
     });
 
-    expect(output).toMatch(/1 key\(s\) in Translify are not in your source files/);
+    expect(output).toMatch(/2 key\(s\) in Translify are not in your source files/);
     expect(output).toMatch(/cart:legacy$/m);
-    expect(output).toContain('1 key(s) kept — published; unpublish it in Translify to delete it:');
     expect(output).toMatch(/cart:live$/m);
-    expect(output).toMatch(/--prune/);
+    expect(output).not.toMatch(/published/);
+    expect(output).toMatch(/Use --prune to move them to the trash\./);
   });
 
   it('does not hint --prune when --prune was passed', () => {
-    const res: PushResponse = { ...base, orphans: [{ namespace: 'cart', key: 'legacy', published: false }] };
+    const res: PushResponse = { ...base, orphans: [{ namespace: 'cart', key: 'legacy' }] };
 
     expect(stripVTControlCharacters(renderPush(res, { prune: true }))).not.toMatch(/Use --prune/);
     expect(plain(res)).toMatch(/Use --prune/);
   });
 
   it('caps a long orphan list', () => {
-    const orphans = Array.from({ length: 25 }, (_, i) => ({ namespace: 'n', key: `k${i}`, published: false }));
+    const orphans = Array.from({ length: 25 }, (_, i) => ({ namespace: 'n', key: `k${i}` }));
     const output: string = plain({ ...base, orphans });
 
     expect(output).toMatch(/n:k19/);
@@ -76,42 +76,55 @@ describe('renderPush', () => {
     expect(output).toMatch(/and 5 more/);
   });
 
-  it('reports pruned keys', () => {
-    expect(plain({ ...base, pruned: 4 })).toMatch(/Deleted 4 key\(s\)/);
-    expect(plain(base)).not.toMatch(/Deleted/);
+  it('reports pruned keys as moved to the trash, never as deleted', () => {
+    const output: string = plain({ ...base, pruned: 4 });
+
+    expect(output).toMatch(/Moved 4 key\(s\) to the Translify trash \(restorable for 30 days\)\./);
+    expect(output).not.toMatch(/[Dd]elete/);
+    expect(plain(base)).not.toMatch(/trash/);
   });
 
   const orphans = [
-    { namespace: 'cart', key: 'a', published: false },
-    { namespace: 'cart', key: 'b', published: false },
+    { namespace: 'cart', key: 'a' },
+    { namespace: 'cart', key: 'b' },
   ];
 
-  it('a dry run with prune says the keys would be deleted, never that they were', () => {
+  it('a dry run with prune says the keys would go to the trash, never that they did', () => {
     const output: string = plain({ ...base, dryRun: true, orphans, pruned: 2 });
 
     expect(output).toMatch(/^Dry run/);
-    expect(output).toMatch(/Would delete 2 key\(s\)/);
-    expect(output).toMatch(/2 key\(s\) not in your source files would be deleted:/);
-    expect(output).not.toMatch(/Deleted/);
+    expect(output).toMatch(/2 key\(s\) not in your source files would be moved to the trash:/);
+    expect(output).toMatch(/Would move 2 key\(s\) to the trash \(restorable for 30 days\)\./);
+    expect(output).not.toMatch(/Moved/);
+    expect(output).not.toMatch(/[Dd]elete/);
     expect(output).not.toMatch(/Use --prune/);
   });
 
-  it('a real prune words the orphan list as deleted keys', () => {
+  it('a real prune words the orphan list as keys moved to the trash', () => {
     const output: string = plain({ ...base, dryRun: false, orphans, pruned: 2 });
 
-    expect(output).toMatch(/Deleted 2 key\(s\) that were not in your source files:/);
+    expect(output).toMatch(/Moved 2 key\(s\) that were not in your source files to the trash \(restorable for 30 days\):/);
     expect(output).toMatch(/cart:a$/m);
     expect(output).not.toMatch(/are not in your source files/);
     expect(output).not.toMatch(/Use --prune/);
-    expect(output).not.toMatch(/Would delete/);
-    expect(output.match(/Deleted/g)).toHaveLength(1);
+    expect(output).not.toMatch(/Would move/);
+    expect(output.match(/Moved/g)).toHaveLength(1);
   });
 
-  it('a real prune counts the keys actually deleted and notes those kept because they were published meanwhile', () => {
+  it('a real prune counts the keys actually archived and notes those archived meanwhile', () => {
     const output: string = plain({ ...base, dryRun: false, orphans, pruned: 1 });
 
-    expect(output).toContain('Deleted 1 key(s) that were not in your source files (1 kept: published during the push):');
-    expect(output).not.toMatch(/Deleted 2/);
+    expect(output).toContain(
+      'Moved 1 key(s) that were not in your source files to the trash (restorable for 30 days; 1 already archived meanwhile):',
+    );
+    expect(output).not.toMatch(/Moved 2/);
+  });
+
+  it('reports keys restored from the trash, as done or as would-be', () => {
+    expect(plain({ ...base, keysRestored: 3 })).toMatch(/Restored 3 key\(s\) from the trash\./);
+    expect(plain({ ...base, dryRun: true, keysRestored: 1 })).toMatch(/Would restore 1 key\(s\) from the trash\./);
+    expect(plain(base)).not.toMatch(/[Rr]estore/);
+    expect(plain({ ...base, keysRestored: 0 })).not.toMatch(/[Rr]estore/);
   });
 });
 
@@ -160,7 +173,7 @@ describe('renderPush review state', () => {
 describe('summarizePush', () => {
   it('totals across locales', () => {
     expect(
-      summarizePush({ ...base, orphans: [{ namespace: 'a', key: 'b', published: true }], pruned: 0 }),
+      summarizePush({ ...base, orphans: [{ namespace: 'a', key: 'b' }], pruned: 0, keysRestored: 2 }),
     ).toEqual({
       dryRun: false,
       created: 12,
@@ -169,10 +182,14 @@ describe('summarizePush', () => {
       skippedFilled: 41,
       unknownKeys: 2,
       orphans: 1,
-      publishedOrphans: 1,
       pruned: 0,
+      keysRestored: 2,
       staleReset: 0,
     });
+  });
+
+  it('defaults keysRestored to 0 when the server omits it', () => {
+    expect(summarizePush(base).keysRestored).toBe(0);
   });
 
   it('carries staleReset', () => {

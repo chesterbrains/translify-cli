@@ -103,7 +103,7 @@ program
   .description('Upload source and target files')
   .option('--dry-run', 'show what would change, write nothing')
   .option('--overwrite-targets', 'overwrite existing target-locale translations')
-  .option('--prune', 'delete keys missing from your source files; published keys are kept; deletes exactly the keys you confirmed, and refuses if anything changed meanwhile (re-run to review)')
+  .option('--prune', 'move keys missing from your source files to the Translify trash (restorable for 30 days); archives exactly the keys you confirmed, and refuses if anything changed meanwhile (re-run to review)')
   .option('-y, --yes', 'confirm destructive flags without prompting')
   .option('--namespace <ns>', 'only this namespace')
   .addOption(

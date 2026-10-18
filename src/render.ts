@@ -18,8 +18,8 @@ export interface PushSummary {
   skippedFilled: number;
   unknownKeys: number;
   orphans: number;
-  publishedOrphans: number;
   pruned: number;
+  keysRestored: number;
   staleReset: number;
 }
 
@@ -33,8 +33,8 @@ export function summarizePush(res: PushResponse): PushSummary {
     skippedFilled: 0,
     unknownKeys: 0,
     orphans: res.orphans.length,
-    publishedOrphans: res.orphans.filter((orphan) => orphan.published).length,
     pruned: res.pruned,
+    keysRestored: res.keysRestored ?? 0,
     staleReset: res.staleReset ?? 0,
   };
   for (const counts of Object.values(res.locales)) {
@@ -76,34 +76,37 @@ export function renderPush(res: PushResponse, view: { prune?: boolean } = {}): s
     );
   }
 
-  // `pruned` is what a dry run would delete or a real push did delete: unpublished orphans only.
-  const unpublished = res.orphans.filter((orphan) => !orphan.published);
-  const published = res.orphans.filter((orphan) => orphan.published);
-  const listed = unpublished;
-  const names = (list: typeof listed): void => {
-    for (const orphan of list.slice(0, MAX_ORPHANS)) lines.push(`    ${orphan.namespace}:${orphan.key}`);
-    if (list.length > MAX_ORPHANS) lines.push(`    …and ${list.length - MAX_ORPHANS} more`);
-  };
+  const restored: number = res.keysRestored ?? 0;
+  if (restored > 0) {
+    lines.push(pc.green(`${res.dryRun ? 'Would restore' : 'Restored'} ${restored} key(s) from the trash.`));
+  }
+
+  // A prune archives every orphan (it goes to the trash, purged 30 days later); `pruned` is what a dry
+  // run would archive or a real push did. A real prune can archive fewer than it listed when some
+  // orphans were archived from the web app meanwhile.
+  const listed = res.orphans;
   if (listed.length > 0) {
+    const meanwhile: number = listed.length - res.pruned;
     const header: string =
       res.pruned === 0
         ? `${listed.length} key(s) in Translify are not in your source files:`
         : res.dryRun
-          ? `${listed.length} key(s) not in your source files would be deleted:`
-          : `Deleted ${res.pruned} key(s) that were not in your source files${
-              listed.length > res.pruned ? ` (${listed.length - res.pruned} kept: published during the push)` : ''
-            }:`;
+          ? `${listed.length} key(s) not in your source files would be moved to the trash:`
+          : `Moved ${res.pruned} key(s) that were not in your source files to the trash (restorable for 30 days${
+              meanwhile > 0 ? `; ${meanwhile} already archived meanwhile` : ''
+            }):`;
     lines.push(pc.yellow(`  ${header}`));
-    names(listed);
-    if (res.pruned === 0 && view.prune !== true) lines.push(pc.dim('  Use --prune to delete them.'));
+    for (const orphan of listed.slice(0, MAX_ORPHANS)) lines.push(`    ${orphan.namespace}:${orphan.key}`);
+    if (listed.length > MAX_ORPHANS) lines.push(`    …and ${listed.length - MAX_ORPHANS} more`);
+    if (res.pruned === 0 && view.prune !== true) lines.push(pc.dim('  Use --prune to move them to the trash.'));
   }
-  if (published.length > 0) {
-    lines.push(pc.yellow(`  ${published.length} key(s) kept — published; unpublish it in Translify to delete it:`));
-    names(published);
+  if (res.pruned > 0 && res.dryRun) {
+    lines.push(pc.yellow(`  Would move ${res.pruned} key(s) to the trash (restorable for 30 days).`));
   }
-  if (res.pruned > 0 && res.dryRun) lines.push(pc.yellow(`  Would delete ${res.pruned} key(s).`));
   // A real prune's orphan header already says it; repeat it only when there was no list.
-  if (res.pruned > 0 && !res.dryRun && listed.length === 0) lines.push(pc.red(`  Deleted ${res.pruned} key(s).`));
+  if (res.pruned > 0 && !res.dryRun && listed.length === 0) {
+    lines.push(pc.yellow(`  Moved ${res.pruned} key(s) to the Translify trash (restorable for 30 days).`));
+  }
 
   return lines.join('\n');
 }

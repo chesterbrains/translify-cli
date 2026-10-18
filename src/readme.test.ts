@@ -62,6 +62,21 @@ describe('README', () => {
     }
   });
 
+  it('describes --prune as archiving to the trash, in the README and in the CLI help', () => {
+    const safety: string = section('Prune safety');
+    expect(safety).toMatch(/archives/);
+    expect(safety).toMatch(/trash/);
+    expect(safety).toMatch(/30 days/);
+    expect(safety).toMatch(/restore/i);
+    expect(safety).not.toMatch(/[Nn]ever published/);
+    expect(section('Commands')).not.toMatch(/`--prune` deletes/);
+
+    const help: string = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const prune: string = help.split('\n').find((line) => line.includes("'--prune'"))!;
+    expect(prune).toMatch(/trash/);
+    expect(prune).not.toMatch(/published keys are kept/);
+  });
+
   it('documents the init flags next to the other command options', () => {
     const options: string = section('Commands');
     expect(options).toMatch(/- `init`: .*`-y\/--yes`.*`--api-url <url>`/);

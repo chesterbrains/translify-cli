@@ -44,11 +44,15 @@ export interface LocaleCounts {
 export interface PushResponse {
   dryRun: boolean;
   locales: Record<string, LocaleCounts>;
-  orphans: Array<{ namespace: string; key: string; published: boolean }>;
+  /** Keys in the pushed namespaces that no source file names. A prune archives every one of them (they go to the trash). */
+  orphans: Array<{ namespace: string; key: string }>;
+  /** Orphans a prune archived (a dry run: would archive). */
   pruned: number;
+  /** Archived keys a source file named, restored from the trash in place. Absent on an older server. */
+  keysRestored?: number;
   /** Approved targets demoted to needs-review because this push changed their source. Absent on an older server. */
   staleReset?: number;
-  /** Hex SHA-256 of the deletable (unpublished) orphans; a confirmed prune sends it back. Absent on an older server. */
+  /** Hex SHA-256 of the orphans; a confirmed prune sends it back. Absent on an older server. */
   pruneDigest?: string;
   /** Non-blocking notes from the server (e.g. an XLIFF <file original> that differs from the rule). Absent when none. */
   warnings?: string[];
@@ -116,9 +120,11 @@ const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, prune:
  */
 const describeDamage = async (preview: PushResponse, opts: PushOptions, api: Api): Promise<string[]> => {
   const damage: string[] = [];
-  // Published orphans are kept by the server, so they are not part of the damage.
-  const deletable: number = preview.orphans.filter((orphan) => !orphan.published).length;
-  if (opts.prune === true && deletable > 0) damage.push(`delete ${deletable} key(s) and all their translations`);
+  // Every orphan is archived, live ones included: they keep serving until the next publish.
+  const archivable: number = preview.orphans.length;
+  if (opts.prune === true && archivable > 0) {
+    damage.push(`move ${archivable} key(s) and their translations to the trash (restorable for 30 days in Translify)`);
+  }
   if (opts.overwriteTargets === true) {
     const { project }: Whoami = await api.get<Whoami>('/cli/v1/whoami');
     const overwritten: Array<[string, number]> = Object.entries(preview.locales)
@@ -176,7 +182,7 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
   const preview: PushResponse = await deps.api.post<PushResponse>(PUSH, buildForm(uploads, opts, true, opts.prune === true));
   if (opts.prune === true && typeof preview.pruneDigest !== 'string') {
     deps.err(
-      'This server cannot confirm a prune (its dry run returned no pruneDigest), so --prune would delete without a bound. ' +
+      'This server cannot confirm a prune (its dry run returned no pruneDigest), so --prune would archive without a bound. ' +
         'Nothing was changed. Upgrade the Translify server, or push without --prune.',
     );
 
@@ -184,7 +190,7 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
   }
   const damage: string[] = await describeDamage(preview, opts, deps.api);
 
-  // Nothing would be deleted or overwritten: no question to ask (F19).
+  // Nothing would be archived or overwritten: no question to ask (F19).
   if (damage.length > 0) {
     // With --json, stdout is reserved for the final document.
     (opts.json === true ? deps.err : deps.out)(renderPush(preview));
@@ -203,10 +209,9 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
     }
   }
 
-  // With deletable orphans the real push sends the digest of the list the user confirmed: if the server's
-  // deletable set differs it answers 409 ORPHANS_CHANGED and writes nothing. With none, there is nothing to prune.
-  const deletable: number = preview.orphans.filter((orphan) => !orphan.published).length;
-  const prune: boolean = opts.prune === true && deletable > 0;
+  // With orphans the real push sends the digest of the list the user confirmed: if the server's orphan
+  // set differs it answers 409 ORPHANS_CHANGED and writes nothing. With none, there is nothing to prune.
+  const prune: boolean = opts.prune === true && preview.orphans.length > 0;
   const res: PushResponse = await deps.api.post<PushResponse>(
     PUSH,
     buildForm(uploads, opts, false, prune, prune ? preview.pruneDigest : undefined),
