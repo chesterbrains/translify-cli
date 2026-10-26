@@ -369,8 +369,9 @@ export function verify(rawBody, headers, secret) {
   const timestamp = Number(headers['x-translify-timestamp']);
   if (!Number.isFinite(timestamp) || Math.abs(Date.now() / 1000 - timestamp) > 300) return false;
   const expected = `v1=${createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex')}`;
-  const given = String(headers['x-translify-signature'] ?? '');
-  return given.length === expected.length && timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+  const given = Buffer.from(String(headers['x-translify-signature'] ?? ''));
+  const wanted = Buffer.from(expected);
+  return given.length === wanted.length && timingSafeEqual(given, wanted);
 }
 ```
 
@@ -390,14 +391,15 @@ is the workflow that closes the loop: on `translify.publication` it runs `transl
 environment in the payload, commits, opens a pull request whose body carries the publish summary (batch, counts,
 actor), runs your build and merges. Two things to set after copying it: the repository setting **Allow GitHub Actions
 to create and approve pull requests** (Settings → Actions → General; without it the job token cannot open the PR),
-and the environment the repository follows, a literal in the job's `if:`. The workflow builds and merges inside the
+and the environment the repository follows: a literal in the job's `if:`, and the webhook limited to that environment
+in Translify, since every environment pulls into the same files. The workflow builds and merges inside the
 same run because a pull request opened with `GITHUB_TOKEN` never triggers other workflows. The
 [translify-examples](https://github.com/chesterbrains/translify-examples/blob/main/.github/workflows/translify-pull-on-publish.yml)
 repository runs this workflow against the demo project.
 
 ## CI (GitHub Actions)
 
-Store the key in the repository secrets as `TRANSLIFY_SECRET_KEY`. Two ready-made workflows live in
+Store the key in the repository secrets as `TRANSLIFY_SECRET_KEY`. Three ready-made workflows live in
 [`recipes/github-actions/`](https://github.com/chesterbrains/translify-cli/tree/main/recipes/github-actions); copy the
 one you need to `.github/workflows/` as it is.
 
@@ -413,7 +415,7 @@ one you need to `.github/workflows/` as it is.
   runs when Translify's GitHub webhook announces a publish: `pull --from env:<slug>` for the published environment,
   commit, a pull request with the publish summary, your build, merge. Key scope: `PULL`. Setup in [Webhooks](#webhooks).
 
-Both use `npx -y translify`, so they follow every 0.x release; pin a version (`npx -y @chesterbrains/translify-cli@0.6`) if a breaking
+All three use `npx -y translify`, so they follow every 0.x release; pin a version (`npx -y @chesterbrains/translify-cli@0.6`) if a breaking
 release must not turn the workflow red on its own.
 
 Fail a pull request when local files drift from Translify:

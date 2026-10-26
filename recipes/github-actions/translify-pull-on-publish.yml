@@ -16,8 +16,9 @@
 #    Settings → Actions → General (Workflow permissions). Without it the job
 #    token cannot open the pull request and the job fails at that step.
 # 2. Set the environment this repository follows in the job's `if:` below
-#    (`'production'` by default). Every environment pulls into the same
-#    files, so a repository follows exactly one.
+#    (`'production'` by default), and limit the webhook in Translify to that
+#    environment. Every environment pulls into the same files, so a
+#    repository follows exactly one.
 # 3. Put your build in the Build step so the pulled files are compiled before
 #    they reach main. Without it the pull request merges right after the pull.
 #
@@ -40,7 +41,9 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: translify-pull-on-publish
+  # Per environment: a pending run is replaced by a newer one in its group, so another environment's dispatch must
+  # never take the place of a pending publish of the one this repository follows.
+  group: translify-pull-on-publish-${{ github.event.client_payload.environment.slug }}
   # Publishes run one after the other, never cancelled: each one pulls what is live when it runs.
   cancel-in-progress: false
 
@@ -85,7 +88,9 @@ jobs:
           git checkout -B "translify/publish-$SLUG-$SEQ"
           git add -A
           git commit -m "chore(i18n): pull $SLUG after batch #$SEQ from Translify"
-          git push --force-with-lease origin HEAD
+          # --force, not --force-with-lease: checkout fetched only the default branch, so a lease has no remote
+          # ref to compare with and rejects every rewrite (a re-run after a failed step). The branch is the bot's.
+          git push --force origin HEAD
 
       # Your build goes here, e.g.:
       # - name: Build

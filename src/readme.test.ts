@@ -60,6 +60,16 @@ describe('README', () => {
     for (const recipe of recipes) {
       expect(ci, recipe).toContain(`https://github.com/chesterbrains/translify-cli/blob/main/recipes/github-actions/${recipe}`);
     }
+    const words: string[] = ['One', 'Two', 'Three', 'Four', 'Five'];
+    expect(ci).toContain(`${words[recipes.length - 1]} ready-made workflows`);
+  });
+
+  it('ships a verify snippet that compares byte lengths before timingSafeEqual', () => {
+    const webhooks: string = section('Webhooks');
+    // A forged header with a non-ASCII character has a different byte length than string length; comparing the
+    // Buffers keeps timingSafeEqual from throwing a RangeError instead of returning false.
+    expect(webhooks).toMatch(/const given = Buffer\.from\(/);
+    expect(webhooks).toMatch(/given\.length === wanted\.length && timingSafeEqual\(given, wanted\)/);
   });
 
   it('documents every webhook header and the signature format in the Webhooks section', () => {
