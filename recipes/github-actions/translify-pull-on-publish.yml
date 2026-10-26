@@ -1,0 +1,131 @@
+# Translify: pull on publish.
+#
+# When an environment is published in Translify, a GitHub webhook (target
+# "GitHub", see the README's Webhooks section) sends a repository_dispatch
+# to this repository. This workflow pulls the published environment with
+# `translify pull --from env:<slug>`, commits the files, opens a pull request
+# whose body carries the publish summary (batch, counts, actor), runs your
+# build and merges. The repository ends up matching what is live; the pull
+# request is the record.
+#
+# Copy this file to .github/workflows/translify-pull-on-publish.yml and store
+# a secret key with the PULL scope in the repository secrets as
+# TRANSLIFY_SECRET_KEY. Then:
+#
+# 1. Enable "Allow GitHub Actions to create and approve pull requests" in
+#    Settings → Actions → General (Workflow permissions). Without it the job
+#    token cannot open the pull request and the job fails at that step.
+# 2. Set the environment this repository follows in the job's `if:` below
+#    (`'production'` by default), and limit the webhook in Translify to that
+#    environment. Every environment pulls into the same files, so a
+#    repository follows exactly one.
+# 3. Put your build in the Build step so the pulled files are compiled before
+#    they reach main. Without it the pull request merges right after the pull.
+#
+# The build and the merge happen inside this run on purpose: a pull request
+# opened with GITHUB_TOKEN never triggers other workflows, so a separate CI run
+# would not start and an auto-merge would wait forever. Delete the Merge step
+# to keep the pull request open for a human instead.
+#
+# `translify.ping` (the "Send test" event) is not listened to: only a publish
+# opens a pull request. Pin the CLI (`npx -y @chesterbrains/translify-cli@0.8`)
+# if a breaking 0.x release must not turn this workflow red on its own.
+name: Translify pull on publish
+
+on:
+  repository_dispatch:
+    types: [translify.publication]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Per environment: a pending run is replaced by a newer one in its group, so another environment's dispatch must
+  # never take the place of a pending publish of the one this repository follows.
+  group: translify-pull-on-publish-${{ github.event.client_payload.environment.slug }}
+  # Publishes run one after the other, never cancelled: each one pulls what is live when it runs.
+  cancel-in-progress: false
+
+jobs:
+  pull-on-publish:
+    # The environment this repository follows. A publish of any other environment is skipped.
+    if: github.event.client_payload.environment.slug == 'production'
+    runs-on: ubuntu-latest
+    env:
+      SLUG: ${{ github.event.client_payload.environment.slug }}
+      SEQ: ${{ github.event.client_payload.batch.seq }}
+      KIND: ${{ github.event.client_payload.batch.kind }}
+      # The whole payload, read with jq below; never interpolated into a script.
+      PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: Pull
+        run: npx -y translify pull --from env:"$SLUG"
+        env:
+          TRANSLIFY_SECRET_KEY: ${{ secrets.TRANSLIFY_SECRET_KEY }}
+
+      # A publish that changed nothing this repository pulls (another namespace, a withheld cell) ends here.
+      - name: Detect changes
+        id: diff
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing to commit: the files already match $SLUG."
+          fi
+
+      # One branch per batch, so a resent delivery rewrites the same branch instead of failing.
+      - name: Commit and push
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B "translify/publish-$SLUG-$SEQ"
+          git add -A
+          git commit -m "chore(i18n): pull $SLUG after batch #$SEQ from Translify"
+          # --force, not --force-with-lease: checkout fetched only the default branch, so a lease has no remote
+          # ref to compare with and rejects every rewrite (a re-run after a failed step). The branch is the bot's.
+          git push --force origin HEAD
+
+      # Your build goes here, e.g.:
+      # - name: Build
+      #   if: steps.diff.outputs.changed == 'true'
+      #   run: flutter gen-l10n && flutter build web
+      # The pulled files must build before they reach main; without a build step this merges right after the pull.
+
+      - name: Open pull request
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="translify/publish-$SLUG-$SEQ"
+          title="$(jq -r '"Translify: \(.environment.name) after batch #\(.batch.seq) (\(.batch.kind))"' <<<"$PAYLOAD")"
+          # Pipes would break the table; back-slash them in the free-text fields.
+          jq -r '
+            def cell: tostring | gsub("\\|"; "\\|");
+            "Pulled **\(.environment.name | cell)** (`\(.environment.slug | cell)`) after batch **#\(.batch.seq)** (`\(.batch.kind)`) by \(.actor.name | cell) (\(.actor.type)).",
+            "The files are what was live when this run pulled, which may already include a later batch.",
+            "",
+            "| Published | Added | Changed | Removed | Withheld | Errors |",
+            "|---|---|---|---|---|---|",
+            "| \(.batch.publishedCount) | \(.batch.addedCount) | \(.batch.changedCount) | \(.batch.removedCount) | \(.batch.withheldCount) | \(.batch.errorCount) |",
+            "",
+            "Delivery `\(.id)` · \(.createdAt) · project `\(.project.slug | cell)`"
+          ' <<<"$PAYLOAD" > body.md
+          if gh pr view "$branch" --json number > /dev/null 2>&1; then
+            gh pr edit "$branch" --title "$title" --body-file body.md
+          elif ! gh pr create --base main --head "$branch" --title "$title" --body-file body.md; then
+            echo '::error::Could not open the pull request. Enable "Allow GitHub Actions to create and approve pull requests" in Settings → Actions → General.'
+            exit 1
+          fi
+
+      - name: Merge
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr merge "translify/publish-$SLUG-$SEQ" --merge --delete-branch

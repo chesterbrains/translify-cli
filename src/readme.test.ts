@@ -60,6 +60,47 @@ describe('README', () => {
     for (const recipe of recipes) {
       expect(ci, recipe).toContain(`https://github.com/chesterbrains/translify-cli/blob/main/recipes/github-actions/${recipe}`);
     }
+    const words: string[] = ['One', 'Two', 'Three', 'Four', 'Five'];
+    expect(ci).toContain(`${words[recipes.length - 1]} ready-made workflows`);
+  });
+
+  it('ships a verify snippet that compares byte lengths before timingSafeEqual', () => {
+    const webhooks: string = section('Webhooks');
+    // A forged header with a non-ASCII character has a different byte length than string length; comparing the
+    // Buffers keeps timingSafeEqual from throwing a RangeError instead of returning false.
+    expect(webhooks).toMatch(/const given = Buffer\.from\(/);
+    expect(webhooks).toMatch(/given\.length === wanted\.length && timingSafeEqual\(given, wanted\)/);
+  });
+
+  it('documents every webhook header and the signature format in the Webhooks section', () => {
+    const webhooks: string = section('Webhooks');
+    for (const header of ['X-Translify-Event', 'X-Translify-Delivery', 'X-Translify-Timestamp', 'X-Translify-Signature']) {
+      expect(webhooks, header).toContain(`\`${header}\``);
+    }
+    expect(webhooks).toContain('translify-webhooks/1');
+    expect(webhooks).toMatch(/v1=/);
+    expect(webhooks).toMatch(/hmac-sha256/i);
+    expect(webhooks).toMatch(/300 s|5 minutes/);
+    expect(webhooks).toMatch(/timingSafeEqual/);
+  });
+
+  it('documents every publication.created payload field', () => {
+    const webhooks: string = section('Webhooks');
+    for (const field of [
+      'publishedCount',
+      'addedCount',
+      'changedCount',
+      'removedCount',
+      'withheldCount',
+      'errorCount',
+      'requireApproved',
+      'translify.publication',
+      'translify.ping',
+      'client_payload',
+    ]) {
+      expect(webhooks, field).toContain(field);
+    }
+    expect(webhooks).toContain('recipes/github-actions/translify-pull-on-publish.yml');
   });
 
   it('describes --prune as archiving to the trash, in the README and in the CLI help', () => {
