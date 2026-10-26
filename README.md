@@ -409,6 +409,9 @@ one you need to `.github/workflows/` as it is.
 - [`translify-release.yml`](https://github.com/chesterbrains/translify-cli/blob/main/recipes/github-actions/translify-release.yml)
   is for apps that bundle translations at build time: `lint`, then `pull`, your build, then `publish` to the environment
   chosen in the Actions tab (or on a tag). Key scopes: `PULL` and `PUBLISH`.
+- [`translify-pull-on-publish.yml`](https://github.com/chesterbrains/translify-cli/blob/main/recipes/github-actions/translify-pull-on-publish.yml)
+  runs when Translify's GitHub webhook announces a publish: `pull --from env:<slug>` for the published environment,
+  commit, a pull request with the publish summary, your build, merge. Key scope: `PULL`. Setup in [Webhooks](#webhooks).
 
 Both use `npx -y translify`, so they follow every 0.x release; pin a version (`npx -y @chesterbrains/translify-cli@0.6`) if a breaking
 release must not turn the workflow red on its own.
