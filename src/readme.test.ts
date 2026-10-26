@@ -62,6 +62,37 @@ describe('README', () => {
     }
   });
 
+  it('documents every webhook header and the signature format in the Webhooks section', () => {
+    const webhooks: string = section('Webhooks');
+    for (const header of ['X-Translify-Event', 'X-Translify-Delivery', 'X-Translify-Timestamp', 'X-Translify-Signature']) {
+      expect(webhooks, header).toContain(`\`${header}\``);
+    }
+    expect(webhooks).toContain('translify-webhooks/1');
+    expect(webhooks).toMatch(/v1=/);
+    expect(webhooks).toMatch(/hmac-sha256/i);
+    expect(webhooks).toMatch(/300 s|5 minutes/);
+    expect(webhooks).toMatch(/timingSafeEqual/);
+  });
+
+  it('documents every publication.created payload field', () => {
+    const webhooks: string = section('Webhooks');
+    for (const field of [
+      'publishedCount',
+      'addedCount',
+      'changedCount',
+      'removedCount',
+      'withheldCount',
+      'errorCount',
+      'requireApproved',
+      'translify.publication',
+      'translify.ping',
+      'client_payload',
+    ]) {
+      expect(webhooks, field).toContain(field);
+    }
+    expect(webhooks).toContain('recipes/github-actions/translify-pull-on-publish.yml');
+  });
+
   it('describes --prune as archiving to the trash, in the README and in the CLI help', () => {
     const safety: string = section('Prune safety');
     expect(safety).toMatch(/archives/);

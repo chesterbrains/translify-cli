@@ -309,6 +309,92 @@ When the project has **Require review** turned on in Translify:
 - `publish` refuses when a translation that would go live has a placeholder error (a missing or extra placeholder, invalid ICU, a printf type mismatch). Nothing is published, the refused translations are listed like `lint` lists them, and the command exits 6. Warnings never block. On an environment with **Publish approved text only**, only approved translations count: one carried over from its last approved text never blocks. `--allow-errors` publishes anyway and reports how many went out with errors; the publish is recorded in the activity log with the override.
 - `pull --only-approved` writes the approved text from the working copy and leaves out translations that were never approved, for building a release bundle without publishing. `status --only-approved` compares against the same. It works with `--from working` only: environments already apply the gate.
 
+## Webhooks
+
+A project's admins can add webhooks under **Integrations**. Translify calls them with `publication.created` every time
+an environment's live batch changes: a publish, a rollback or an unpublish (`batch.kind` says which). A publish whose
+result is identical to what is live emits nothing. `ping` is the test event, sent by "Send test" and by the
+verification dispatch that saves a GitHub webhook.
+
+Deliveries are made by a worker, not by the request that published: five attempts, waiting 1 minute, 5 minutes,
+30 minutes and 2 hours between them, then the delivery is `DEAD` and can be resent from the app. The log keeps 30
+days. The delivery id is the same on every attempt (`X-Translify-Delivery` and the payload's `id`), so a receiver that
+answers slowly and gets the retry can dedupe on it. Answer 2xx as soon as the request is accepted and do the work
+afterwards; the sender waits 10 seconds.
+
+### Payload
+
+```json
+{
+  "id": "<delivery id>",
+  "event": "publication.created",
+  "createdAt": "2026-10-25T14:02:11.000Z",
+  "project": { "id": "…", "slug": "shop", "name": "Shop" },
+  "environment": { "id": "…", "slug": "production", "name": "Production", "requireApproved": true },
+  "batch": {
+    "id": "…", "seq": 41, "kind": "PUBLISH",
+    "publishedCount": 1280, "addedCount": 3, "changedCount": 14, "removedCount": 0,
+    "withheldCount": 0, "errorCount": 0
+  },
+  "actor": { "type": "user", "id": "…", "name": "Anna Rossi" }
+}
+```
+
+`addedCount`, `changedCount` and `removedCount` are the batch's diff against the previous live batch: a first publish
+has everything in `addedCount`; an `UNPUBLISH` has `publishedCount: 0` and everything that went offline in
+`removedCount`. "Did anything change" is the sum of the three. `withheldCount` is what a `requireApproved` gate kept
+back, `errorCount` the cells published with placeholder errors (`--allow-errors`). `actor.type` is `user`, `apiKey`
+(a CLI publish; `name` is the key's name) or `system`. A `ping` carries `id`, `event`, `createdAt`, `project` and
+`webhook { id, target, destination }` only.
+
+### Verify a delivery
+
+Generic webhooks `POST` the payload as `application/json` to an `https://` URL on a public host, with:
+
+| Header | Value |
+| --- | --- |
+| `X-Translify-Event` | `publication.created` or `ping` |
+| `X-Translify-Delivery` | the delivery id, identical on every attempt |
+| `X-Translify-Timestamp` | unix seconds when the attempt was sent |
+| `X-Translify-Signature` | `v1=<hex hmac-sha256(secret, "<timestamp>.<body>")>` |
+| `User-Agent` | `translify-webhooks/1` |
+
+The signing secret (`whsec_…`) is shown once when the webhook is created. Verify over the raw body, compare in constant
+time and refuse a timestamp more than 300 s (5 minutes) away from now:
+
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+export function verify(rawBody, headers, secret) {
+  const timestamp = Number(headers['x-translify-timestamp']);
+  if (!Number.isFinite(timestamp) || Math.abs(Date.now() / 1000 - timestamp) > 300) return false;
+  const expected = `v1=${createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex')}`;
+  const given = String(headers['x-translify-signature'] ?? '');
+  return given.length === expected.length && timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+}
+```
+
+### GitHub
+
+A webhook with the **GitHub** target sends a
+[`repository_dispatch`](https://docs.github.com/en/rest/repos/repos#create-a-repository-dispatch-event) instead:
+`POST https://api.github.com/repos/<owner>/<repo>/dispatches` with `event_type` `translify.publication` (or
+`translify.ping`) and the payload above as `client_payload`. No signature: GitHub authenticates the token.
+
+The token is a fine-grained personal access token with **Contents: Read and write** on that one repository (that is
+the permission `repository_dispatch` needs). Translify verifies it with a `translify.ping` dispatch before saving and
+refuses a token or repository GitHub rejects; the expiry GitHub reports is shown in the list from 14 days out.
+
+[`recipes/github-actions/translify-pull-on-publish.yml`](https://github.com/chesterbrains/translify-cli/blob/main/recipes/github-actions/translify-pull-on-publish.yml)
+is the workflow that closes the loop: on `translify.publication` it runs `translify pull --from env:<slug>` for the
+environment in the payload, commits, opens a pull request whose body carries the publish summary (batch, counts,
+actor), runs your build and merges. Two things to set after copying it: the repository setting **Allow GitHub Actions
+to create and approve pull requests** (Settings → Actions → General; without it the job token cannot open the PR),
+and the environment the repository follows, a literal in the job's `if:`. The workflow builds and merges inside the
+same run because a pull request opened with `GITHUB_TOKEN` never triggers other workflows. The
+[translify-examples](https://github.com/chesterbrains/translify-examples/blob/main/.github/workflows/translify-pull-on-publish.yml)
+repository runs this workflow against the demo project.
+
 ## CI (GitHub Actions)
 
 Store the key in the repository secrets as `TRANSLIFY_SECRET_KEY`. Two ready-made workflows live in
