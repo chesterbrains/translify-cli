@@ -20,12 +20,15 @@
 #    environment. Every environment pulls into the same files, so a
 #    repository follows exactly one.
 # 3. Put your build in the Build step so the pulled files are compiled before
-#    they reach main. Without it the pull request merges right after the pull.
+#    they reach the default branch. Without it the pull request merges right
+#    after the pull.
 #
 # The build and the merge happen inside this run on purpose: a pull request
 # opened with GITHUB_TOKEN never triggers other workflows, so a separate CI run
 # would not start and an auto-merge would wait forever. Delete the Merge step
-# to keep the pull request open for a human instead.
+# to keep the pull request open for a human instead. If the default branch is
+# protected (required checks or reviews), the job token cannot merge: delete
+# the Merge step, or give the token a bypass in the branch rules.
 #
 # `translify.ping` (the "Send test" event) is not listened to: only a publish
 # opens a pull request. Pin the CLI (`npx -y @chesterbrains/translify-cli@0.8`)
@@ -55,7 +58,8 @@ jobs:
     env:
       SLUG: ${{ github.event.client_payload.environment.slug }}
       SEQ: ${{ github.event.client_payload.batch.seq }}
-      KIND: ${{ github.event.client_payload.batch.kind }}
+      BRANCH: translify/publish-${{ github.event.client_payload.environment.slug }}-${{ github.event.client_payload.batch.seq }}
+      BASE: ${{ github.event.repository.default_branch }}
       # The whole payload, read with jq below; never interpolated into a script.
       PAYLOAD: ${{ toJSON(github.event.client_payload) }}
     steps:
@@ -85,47 +89,52 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git checkout -B "translify/publish-$SLUG-$SEQ"
+          git checkout -B "$BRANCH"
           git add -A
           git commit -m "chore(i18n): pull $SLUG after batch #$SEQ from Translify"
           # --force, not --force-with-lease: checkout fetched only the default branch, so a lease has no remote
           # ref to compare with and rejects every rewrite (a re-run after a failed step). The branch is the bot's.
           git push --force origin HEAD
 
-      # Your build goes here, e.g.:
-      # - name: Build
-      #   if: steps.diff.outputs.changed == 'true'
-      #   run: flutter gen-l10n && flutter build web
-      # The pulled files must build before they reach main; without a build step this merges right after the pull.
-
       - name: Open pull request
         if: steps.diff.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          branch="translify/publish-$SLUG-$SEQ"
           title="$(jq -r '"Translify: \(.environment.name) after batch #\(.batch.seq) (\(.batch.kind))"' <<<"$PAYLOAD")"
-          # Pipes would break the table; back-slash them in the free-text fields.
+          # Names are free text: back-slash the Markdown characters so they cannot break the table, format or @mention.
           jq -r '
-            def cell: tostring | gsub("\\|"; "\\|");
-            "Pulled **\(.environment.name | cell)** (`\(.environment.slug | cell)`) after batch **#\(.batch.seq)** (`\(.batch.kind)`) by \(.actor.name | cell) (\(.actor.type)).",
+            def cell: tostring | gsub("(?<c>[`*_\\[\\]<>@|\\\\])"; "\\\(.c)");
+            "Pulled **\(.environment.name | cell)** (`\(.environment.slug)`) after batch **#\(.batch.seq)** (`\(.batch.kind)`) by \(.actor.name | cell) (\(.actor.type)).",
             "The files are what was live when this run pulled, which may already include a later batch.",
             "",
             "| Published | Added | Changed | Removed | Withheld | Errors |",
             "|---|---|---|---|---|---|",
             "| \(.batch.publishedCount) | \(.batch.addedCount) | \(.batch.changedCount) | \(.batch.removedCount) | \(.batch.withheldCount) | \(.batch.errorCount) |",
             "",
-            "Delivery `\(.id)` · \(.createdAt) · project `\(.project.slug | cell)`"
+            "Delivery `\(.id)` · \(.createdAt) · project `\(.project.slug)`"
           ' <<<"$PAYLOAD" > body.md
-          if gh pr view "$branch" --json number > /dev/null 2>&1; then
-            gh pr edit "$branch" --title "$title" --body-file body.md
-          elif ! gh pr create --base main --head "$branch" --title "$title" --body-file body.md; then
-            echo '::error::Could not open the pull request. Enable "Allow GitHub Actions to create and approve pull requests" in Settings → Actions → General.'
+          # Only an open pull request for this branch is reused; a merged one from an earlier run is not.
+          number="$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number')"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "$title" --body-file body.md
+          elif ! gh pr create --base "$BASE" --head "$BRANCH" --title "$title" --body-file body.md 2> create.err; then
+            cat create.err
+            if grep -q "not permitted to create" create.err; then
+              echo '::error::Enable "Allow GitHub Actions to create and approve pull requests" in Settings → Actions → General.'
+            fi
             exit 1
           fi
+
+      # Your build goes here, e.g.:
+      # - name: Build
+      #   if: steps.diff.outputs.changed == 'true'
+      #   run: flutter gen-l10n && flutter build web
+      # The pulled files must build before they reach the default branch; a failing build leaves the pull request
+      # open for a human. Without a build step this merges right after the pull.
 
       - name: Merge
         if: steps.diff.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr merge "translify/publish-$SLUG-$SEQ" --merge --delete-branch
+        run: gh pr merge "$BRANCH" --merge --delete-branch

@@ -343,7 +343,8 @@ afterwards; the sender waits 10 seconds.
 `addedCount`, `changedCount` and `removedCount` are the batch's diff against the previous live batch: a first publish
 has everything in `addedCount`; an `UNPUBLISH` has `publishedCount: 0` and everything that went offline in
 `removedCount`. "Did anything change" is the sum of the three. `withheldCount` is what a `requireApproved` gate kept
-back, `errorCount` the cells published with placeholder errors (`--allow-errors`). `actor.type` is `user`, `apiKey`
+back, `errorCount` the cells that went live with placeholder errors (a publish with `--allow-errors` or the app's
+"publish anyway", or a rollback, which skips the gate). `actor.type` is `user`, `apiKey`
 (a CLI publish; `name` is the key's name) or `system`. A `ping` carries `id`, `event`, `createdAt`, `project` and
 `webhook { id, target, destination }` only.
 
@@ -359,8 +360,9 @@ Generic webhooks `POST` the payload as `application/json` to an `https://` URL o
 | `X-Translify-Signature` | `v1=<hex hmac-sha256(secret, "<timestamp>.<body>")>` |
 | `User-Agent` | `translify-webhooks/1` |
 
-The signing secret (`whsec_…`) is shown once when the webhook is created. Verify over the raw body, compare in constant
-time and refuse a timestamp more than 300 s (5 minutes) away from now:
+The signing secret is shown once when the webhook is created: a generated `whsec_…`, or the 16 to 255 characters you
+supplied. Verify over the raw body, compare in constant time and refuse a timestamp more than 300 s (5 minutes) away
+from now:
 
 ```js
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -389,11 +391,13 @@ refuses a token or repository GitHub rejects; the expiry GitHub reports is shown
 [`recipes/github-actions/translify-pull-on-publish.yml`](https://github.com/chesterbrains/translify-cli/blob/main/recipes/github-actions/translify-pull-on-publish.yml)
 is the workflow that closes the loop: on `translify.publication` it runs `translify pull --from env:<slug>` for the
 environment in the payload, commits, opens a pull request whose body carries the publish summary (batch, counts,
-actor), runs your build and merges. Two things to set after copying it: the repository setting **Allow GitHub Actions
-to create and approve pull requests** (Settings → Actions → General; without it the job token cannot open the PR),
-and the environment the repository follows: a literal in the job's `if:`, and the webhook limited to that environment
-in Translify, since every environment pulls into the same files. The workflow builds and merges inside the
-same run because a pull request opened with `GITHUB_TOKEN` never triggers other workflows. The
+actor), runs the build step you add and merges. Three things to set after copying it: the repository setting **Allow
+GitHub Actions to create and approve pull requests** (Settings → Actions → General; without it the job token cannot
+open the PR); the environment the repository follows, a literal in the job's `if:`, with the webhook limited to that
+environment in Translify since every environment pulls into the same files; and your build in the commented Build
+step, so a pull that does not compile leaves the pull request open instead of merging. The workflow builds and merges
+inside the same run because a pull request opened with `GITHUB_TOKEN` never triggers other workflows; a protected
+default branch needs the Merge step removed or a bypass for the token. The
 [translify-examples](https://github.com/chesterbrains/translify-examples/blob/main/.github/workflows/translify-pull-on-publish.yml)
 repository runs this workflow against the demo project.
 

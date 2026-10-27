@@ -103,6 +103,13 @@ describe('README', () => {
     expect(webhooks).toContain('recipes/github-actions/translify-pull-on-publish.yml');
   });
 
+  it('tells the GitHub recipe user about the protected branch and the build step', () => {
+    const webhooks: string = section('Webhooks');
+    expect(webhooks).toMatch(/protected\s+default branch/);
+    expect(webhooks).toMatch(/Three things to set/);
+    expect(webhooks).toMatch(/16 to 255 characters/);
+  });
+
   it('describes --prune as archiving to the trash, in the README and in the CLI help', () => {
     const safety: string = section('Prune safety');
     expect(safety).toMatch(/archives/);

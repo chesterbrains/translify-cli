@@ -1,6 +1,6 @@
 {
   "name": "@chesterbrains/translify-cli",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Push, pull and publish Translify translations from your repository",
   "license": "MIT",
   "repository": {
