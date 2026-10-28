@@ -51,6 +51,40 @@ describe('loadConfig', () => {
     await expect(loadConfig(bad)).rejects.toThrow(/files\.0\.namespace Android files need a fixed namespace/);
   });
 
+  describe('loadConfig format strings/stringsdict', () => {
+    it.each(['strings', 'stringsdict'])('accepts %s with a namespace', async (format) => {
+      const ok = await withConfig({
+        apiUrl: 'https://x/api',
+        files: [{ pattern: `App/{locale}.lproj/Localizable.${format}`, format, namespace: 'localizable' }],
+      });
+      expect((await loadConfig(ok)).files[0]?.format).toBe(format);
+    });
+
+    it.each(['strings', 'stringsdict'])('refuses %s without a namespace', async (format) => {
+      const bad = await withConfig({
+        apiUrl: 'https://x/api',
+        files: [{ pattern: `App/{locale}.lproj/Localizable.${format}`, format }],
+      });
+      await expect(loadConfig(bad)).rejects.toThrow(/files\.0\.namespace \.strings files need a fixed namespace/);
+    });
+
+    it.each(['strings', 'stringsdict'])('refuses {namespace} in a %s pattern', async (format) => {
+      const bad = await withConfig({
+        apiUrl: 'https://x/api',
+        files: [{ pattern: `App/{locale}.lproj/{namespace}.${format}`, format, namespace: 'localizable' }],
+      });
+      await expect(loadConfig(bad)).rejects.toThrow(new RegExp(`files\\.0\\.pattern \\{namespace\\} does not apply to format "${format}"`));
+    });
+
+    it.each(['strings', 'stringsdict'])('refuses xliffDialect on %s', async (format) => {
+      const bad = await withConfig({
+        apiUrl: 'https://x/api',
+        files: [{ pattern: `App/{locale}.lproj/Localizable.${format}`, format, namespace: 'localizable', xliffDialect: 'xcode' }],
+      });
+      await expect(loadConfig(bad)).rejects.toThrow(/files\.0\.xliffDialect only applies to format "xliff"/);
+    });
+  });
+
   it('rejects a malformed namespace', async () => {
     const root = await withConfig({
       apiUrl: 'https://x/api',

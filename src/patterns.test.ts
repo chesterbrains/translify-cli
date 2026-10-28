@@ -209,3 +209,26 @@ describe('android rules', () => {
     expect(() => pathFor(rule, 'it', 'strings', android())).toThrow(/default locale/);
   });
 });
+
+describe('strings and stringsdict slot pairing', () => {
+  const rule = (format: 'strings' | 'stringsdict' | 'json', ext: string) => ({
+    pattern: `App/{locale}.lproj/Localizable.${ext}`,
+    format,
+    namespace: 'localizable',
+  });
+
+  it('lets a strings and a stringsdict rule share a cell, refuses a json rule on it', async () => {
+    const root = await tree(['App/en.lproj/Localizable.strings', 'App/en.lproj/Localizable.stringsdict', 'App/en.lproj/Localizable.json']);
+    const pair: Config = config({ files: [rule('strings', 'strings'), rule('stringsdict', 'stringsdict')] });
+    const found = await findFiles(pair, root);
+    expect(found.map((match) => match.path).sort()).toEqual(['App/en.lproj/Localizable.strings', 'App/en.lproj/Localizable.stringsdict']);
+
+    const reversed: Config = config({ files: [rule('stringsdict', 'stringsdict'), rule('strings', 'strings')] });
+    expect(await findFiles(reversed, root)).toHaveLength(2);
+
+    const clash: Config = config({ files: [rule('strings', 'strings'), rule('json', 'json')] });
+    await expect(findFiles(clash, root)).rejects.toThrow(/both map to locale en, namespace localizable/);
+    const same: Config = config({ files: [rule('strings', 'strings'), rule('strings', 'strings')] });
+    await expect(findFiles(same, root)).rejects.toThrow(/matched by more than one files rule/);
+  });
+});

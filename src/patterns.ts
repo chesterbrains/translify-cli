@@ -108,7 +108,11 @@ export async function findFiles(config: Config, cwd: string, context: PathContex
     }
     const cell = `${match.locale}\u0000${match.namespace}`;
     const sameCell: Match | undefined = byCell.get(cell);
-    if (sameCell !== undefined) {
+    const pair: boolean =
+      sameCell !== undefined &&
+      ((sameCell.rule.format === 'strings' && match.rule.format === 'stringsdict') ||
+        (sameCell.rule.format === 'stringsdict' && match.rule.format === 'strings'));
+    if (sameCell !== undefined && !pair) {
       const mine: string | undefined = qualifiers.get(match.path);
       const theirs: string | undefined = qualifiers.get(sameCell.path);
       if (mine !== undefined && theirs !== undefined && (mine === '') !== (theirs === '')) {
@@ -124,7 +128,7 @@ export async function findFiles(config: Config, cwd: string, context: PathContex
       );
     }
     byPath.set(match.path, match);
-    byCell.set(cell, match);
+    if (!pair) byCell.set(cell, match);
   }
 
   return matches;
