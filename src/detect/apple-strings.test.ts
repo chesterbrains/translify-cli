@@ -74,8 +74,26 @@ describe('detectAppleStrings', () => {
 
     expect(await detectAppleStrings(cwd)).toEqual({
       rules: [rule('strings', 'localizable', 'Localizable')],
-      notes: ['Only Base.lproj holds Localizable: map it with "locales": { "Base": "<your default locale>" }'],
+      notes: ['Base.lproj holds Localizable: map it with "locales": { "Base": "<your default locale>" }'],
     });
+  });
+
+  it('notes Base.lproj next to another locale', async () => {
+    const cwd: string = await tree(['Base.lproj/Localizable.strings', 'it.lproj/Localizable.strings']);
+
+    expect((await detectAppleStrings(cwd)).notes).toEqual(['Base.lproj holds Localizable: map it with "locales": { "Base": "<your default locale>" }']);
+  });
+
+  it('gives no Base note without Base.lproj', async () => {
+    const cwd: string = await tree(['en.lproj/Localizable.strings', 'it.lproj/Localizable.strings']);
+
+    expect((await detectAppleStrings(cwd)).notes).toEqual([]);
+  });
+
+  it('ignores vendored frameworks and Carthage', async () => {
+    const cwd: string = await tree(['Vendor/Foo.framework/en.lproj/Foo.strings', 'Carthage/Build/Bar.framework/en.lproj/Bar.strings']);
+
+    expect(await detectAppleStrings(cwd)).toEqual({ rules: [], notes: [] });
   });
 
   it('ignores build output', async () => {

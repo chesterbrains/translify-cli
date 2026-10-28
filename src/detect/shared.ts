@@ -22,3 +22,17 @@ export const posixPath = (value: string): string => value.replaceAll('\\', '/').
 
 /** 2 → `second`, 3 → `third`, then `4th`, `5th`… */
 export const ordinal = (n: number): string => (n === 2 ? 'second' : n === 3 ? 'third' : `${n}th`);
+
+/** Build output and vendored dependencies: their localisations are not the project's own. */
+export const IGNORE: string[] = [
+  '**/.build/**',
+  '**/Pods/**',
+  '**/Carthage/**',
+  '**/node_modules/**',
+  '**/DerivedData/**',
+  '**/.git/**',
+  '**/*.xcloc/**',
+  '**/*.framework/**',
+  '**/*.xcframework/**',
+  '**/*.bundle/**',
+];

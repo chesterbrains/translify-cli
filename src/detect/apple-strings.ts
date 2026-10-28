@@ -2,9 +2,7 @@ import { posix } from 'node:path';
 import fg from 'fast-glob';
 
 import type { FileRule } from '../config.js';
-import { kebab, NONE, ordinal, type Detection } from './shared.js';
-
-const IGNORE: string[] = ['**/.build/**', '**/Pods/**', '**/node_modules/**', '**/DerivedData/**', '**/.git/**', '**/*.xcloc/**'];
+import { IGNORE, kebab, NONE, ordinal, type Detection } from './shared.js';
 
 interface Table {
   dir: string;
@@ -67,8 +65,8 @@ export async function detectAppleStrings(cwd: string): Promise<Detection> {
     if (count > 1) {
       notes.push(`Two directories hold a ${table} table: the ${ordinal(count)} one (${dir}) is namespace ${namespace}.`);
     }
-    if (lprojs.size === 1 && lprojs.has('Base.lproj')) {
-      notes.push(`Only Base.lproj holds ${table}: map it with "locales": { "Base": "<your default locale>" }`);
+    if (lprojs.has('Base.lproj')) {
+      notes.push(`Base.lproj holds ${table}: map it with "locales": { "Base": "<your default locale>" }`);
     }
     const prefix: string = dir === '.' ? '' : `${dir}/`;
     if (plain) rules.push({ pattern: `${prefix}{locale}.lproj/${table}.strings`, format: 'strings', namespace });
