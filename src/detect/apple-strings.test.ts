@@ -101,4 +101,28 @@ describe('detectAppleStrings', () => {
 
     expect(rules.map((r) => r.format)).toEqual(['xliff', 'strings']);
   });
+
+  it('skips tables that localize Interface Builder', async () => {
+    const cwd: string = await tree(['Base.lproj/Main.storyboard', 'it.lproj/Main.strings', 'Base.lproj/Cell.xib', 'it.lproj/Cell.strings', 'en.lproj/Localizable.strings']);
+    const found = await detectAppleStrings(cwd);
+    expect(found.rules.map((r) => r.namespace)).toEqual(['localizable']);
+    expect(found.notes).toContain('Main.strings localizes Interface Builder; not managed.');
+    expect(found.notes).toContain('Cell.strings localizes Interface Builder; not managed.');
+  });
+
+  it('skips a table with no source-language file', async () => {
+    const found = await detectAppleStrings(await tree(['it.lproj/InfoPlist.strings', 'en.lproj/Localizable.strings']));
+    expect(found.rules.map((r) => r.namespace)).toEqual(['localizable']);
+    expect(found.notes).toEqual(['InfoPlist.strings has no source-language file; not managed.']);
+  });
+
+  it('emits only the stringsdict rule for a stringsdict-only table', async () => {
+    const found = await detectAppleStrings(await tree(['en.lproj/Plurals.stringsdict', 'it.lproj/Plurals.stringsdict']));
+    expect(found.rules).toEqual([{ pattern: '{locale}.lproj/Plurals.stringsdict', format: 'stringsdict', namespace: 'plurals' }]);
+  });
+
+  it('names a third colliding table "third"', async () => {
+    const found = await detectAppleStrings(await tree(['A/en.lproj/T.strings', 'B/en.lproj/T.strings', 'C/en.lproj/T.strings']));
+    expect(found.notes.some((n) => n.includes('the third one (C)'))).toBe(true);
+  });
 });

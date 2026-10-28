@@ -104,7 +104,7 @@ export async function runInit(deps: InitDeps): Promise<ExitCode> {
   const detection: Detection = await detectLayout(deps.cwd);
   const detected: FileRule[] = detection.rules;
   if (detected.length === 0) {
-    deps.out(`No i18next, Flutter, Angular or Xcode layout found in ${deps.cwd} (detection looks only in the current directory). Wrote an example rule (${EXAMPLE_RULE.pattern}): edit files[] to match your project.`);
+    deps.out(`No i18next, Flutter, Angular, Xcode, Android or iOS (.lproj) layout found in ${deps.cwd} (detection looks only in the current directory). Wrote an example rule (${EXAMPLE_RULE.pattern}): edit files[] to match your project.`);
   } else {
     deps.out(`Found: ${detected.map((rule) => `${rule.pattern} (${rule.format})`).join(', ')}`);
   }
