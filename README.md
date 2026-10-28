@@ -206,6 +206,72 @@ currency), a translation whose shape differs from the source (plain text for a p
 placeholders are printf or i18next rather than ICU. A complete example is `examples/ios-xcstrings` in
 [translify-examples](https://github.com/chesterbrains/translify-examples).
 
+## Android (strings.xml)
+
+Android keeps strings in `res/values/strings.xml` (default language) and `res/values-<qualifier>/strings.xml`
+(translations). Set `format: "android"` and a fixed `namespace` on the rule; Translify keeps ICU, so the same keys serve
+React, Flutter, iOS and Android, and Android translations get placeholder validation (`%1$s` lost in Italian fails
+at runtime, not at build).
+
+```json
+{ "files": [{ "pattern": "app/src/main/res/values-{locale}/strings.xml", "format": "android", "namespace": "strings" }] }
+```
+
+`translify init` finds every `res/values/*.xml` whose root is `<resources>` and writes one rule per file (namespace =
+file name, kebab-case; `donottranslate.xml` is skipped). Several modules with a `values/` directory get a note.
+
+The folder qualifier follows Android's rules: `it` → `values-it`, `pt-BR` → `values-pt-rBR`, anything else (a script, a
+three-letter language) → `values-b+sr+Latn`. The project's **default locale is the plain `values/` folder**, so the CLI
+asks the server for it (one `whoami` per run) and the `-{locale}` part of the pattern disappears for it. The `locales` map
+still applies after this mapping, for anything unusual.
+
+Workflow:
+
+1. `translify push` sends `values/strings.xml` (the default locale) and any `values-*` files you already have.
+2. Translate in Translify.
+3. `translify pull` writes `values-it/strings.xml` and the rest. Android falls back to `values/` for a string a locale
+   does not have, so untranslated keys are left out.
+
+What `pull` writes (positions are kept exactly as the pushed `values/strings.xml` wrote them: `%2$s by %1$s` stays
+`%2$s by %1$s`, gaps like `%1$s %3$s` are kept, and a plural's count keeps its position, e.g. `%2$d songs by %1$s`. Only keys
+created in the web UI or from another format are numbered by first appearance in the source. Translations are written with
+the same positions as the source, so a reordered Italian keeps its meaning. The specifier comes from the push that created
+the key, else `%s` for text, `%d` for a plural's count, `%f` for a fraction):
+
+| Translify value | Written |
+|---|---|
+| `Hello, {name}` | `<string name="key">Hello, %1$s</string>` |
+| `{count, plural, one {# item} other {# items}}` (the whole message) | `<plurals name="key">` with `<item quantity="one">%1$d item</item>`, `<item quantity="other">%1$d items</item>` |
+| `Save 10% with {code}` | `Save 10%% with %1$s` (`%` is written `%%` for every key that has placeholders) |
+| `colors.0`, `colors.1` pushed from a `<string-array>` | `<string-array name="colors">` with one `<item>` each; left out of a locale until every item is translated |
+| a description | `<!-- … -->` above the element, in the default-locale file |
+
+Elements are sorted by key with a four-space indent, so `translify status` is byte-stable.
+
+What `push` reads: `<string>`, `<plurals>` (one ICU plural, `other` required) and `<string-array>` (keys `name.0`, `name.1`, …).
+`%s` / `%1$s` → `{arg1}` (renamed to the key's own argument when the key already exists), `%d` → `{arg2}` or `#` inside a
+plural, `%.2f` → `{arg, number}`, `%%` → `%` (always, whether or not the string has a placeholder). `<b>`, `<i>` and `<a href>` tags are kept as they are; `<xliff:g>` tags are
+dropped and their content kept. Escapes are read like Android does (`\'`, `\"`, `\n`, `\uXXXX`, quotes preserve
+whitespace) and written back the same way: apostrophes are always escaped (`\'`), a string with leading, trailing or
+doubled spaces is wrapped in quotes, `&`, `<` and `>` in text become entities. Resources that are not strings
+(`<bool>`, `<dimen>`, `<color>`, …) are skipped with a warning, as are strings marked `translatable="false"`.
+
+Advice:
+
+- Keep `translatable="false"` strings (and everything that is not a string: dimens, colors, styles) in
+  `donottranslate.xml` or another file you do not push. A pull **rewrites** the file, so anything Translify does not hold
+  would be dropped, and a push warns with a count of what it skipped.
+- A literal `<b>` in a text is written back as a tag: a stored `<b>` cannot be told apart from markup. Keep a string
+  that must show a literal tag out of Translify (`translatable="false"`).
+- Keys must match `[A-Za-z_][A-Za-z0-9_.]*`: a `-` collides in `R` and a leading digit does not compile.
+
+Not supported in this version (the pull is refused with `ANDROID_UNSUPPORTED`, the push reports the element): `select` and
+`selectordinal`, exact matches (`=0`) and `offset`, text around a plural (the plural must be the whole message), two
+plurals in one message, nested plurals, number formats without a known printf type (e.g. currency), a translation whose
+shape differs from the source (plain text for a plural), keys whose placeholders are printf or i18next rather than ICU,
+keys with a `-` or a leading digit, and a string-array whose item keys are not contiguous from `.0`. Pushing a
+`<plurals>` without `other`, an unknown `quantity`, or an `<item>` without `type="string"` is a row error.
+
 ## `translify.json` reference
 
 `translify.json` lives in the repository root; every command reads it from the current directory. The
@@ -218,8 +284,8 @@ fields are refused, and so is any field whose name contains `key`, `secret` or `
 | `apiUrl` | URL | yes | The Translify API base, ending in `/api`, e.g. `https://translify.tommasofeltrin.work/api`. |
 | `files` | array | yes | One rule per kind of translation file. Each rule has the fields below. |
 | `files[].pattern` | string | yes | Path relative to `translify.json`, with `/` separators. Must contain `{locale}` once and may contain `{namespace}` once, e.g. `locales/{locale}/{namespace}.json`. |
-| `files[].format` | `json` \| `xliff` \| `arb` | yes | File format: i18next JSON, XLIFF or Flutter ARB. |
-| `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
+| `files[].format` | `json` \| `xliff` \| `arb` \| `android` | yes | File format: i18next JSON, XLIFF, Flutter ARB or Android `strings.xml` ([Android (strings.xml)](#android-stringsxml)). |
+| `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb` and `android` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
 | `files[].jsonStyle` | `nested` \| `flat` | no | Only for `json`. `nested` (the default) writes `{ "a": { "b": "…" } }`, `flat` writes `{ "a.b": "…" }`. |
 | `files[].xliffDialect` | `angular` \| `xcode` | no | Only for `xliff`. `angular` writes `@angular/localize` placeholders on pull and reads `ng extract-i18n` output on push ([Angular (XLIFF)](#angular-xliff)); `xcode` writes XLIFF 1.2 for String Catalogs and reads `xcodebuild -exportLocalizations` output ([Xcode (XLIFF)](#xcode-xliff)). |
 | `files[].xliffOriginal` | string | with `xliffDialect: "xcode"` | The String Catalog path Xcode knows, e.g. `Sources/App/Localizable.xcstrings`; written to `<file original>`. Xcode imports nothing when it does not match the project. Only with `xcode`. |
@@ -232,7 +298,7 @@ otherwise the CLI stops before sending anything and names the files involved.
 
 | Command | What it does |
 |---|---|
-| `translify init` | Create `translify.json`: detects i18next, Flutter, Angular and Xcode layouts, asks for your key (interactive, or `--yes`) |
+| `translify init` | Create `translify.json`: detects i18next, Flutter, Angular, Xcode and Android layouts, asks for your key (interactive, or `--yes`) |
 | `translify login` | Store a secret key on this machine (interactive) |
 | `translify push` | Upload source and target files |
 | `translify pull` | Download translation files |
@@ -481,6 +547,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `APPROVED_ONLY_REQUIRES_WORKING` | 1 | `--only-approved` was combined with `--from env:<slug>`. Pull an environment without it; it already holds only what its gate allowed. |
 | `INVALID_CELLS` | 6 | `publish` refused: translations that would go live have placeholder errors. Nothing was published; the output lists them like `lint` does. Fix them in Translify, or re-run with `--allow-errors` to publish anyway (recorded in the activity log). |
 | `XLIFF_DIALECT_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written in the rule's XLIFF dialect (Angular: text beside a plural, nested plurals, number/date formats; Xcode: `select`, `=0`/`offset`, a translation of a different shape; both: printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Angular (XLIFF)](#angular-xliff) and [Xcode (XLIFF)](#xcode-xliff). |
+| `ANDROID_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Android `strings.xml` (`select`, `=0`/`offset`, text around a plural, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys, a key with `-` or a leading digit, a gapped array). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Android (strings.xml)](#android-stringsxml). |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |

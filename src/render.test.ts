@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { PushResponse } from './commands/push.js';
 import type { LintCell, LintResponse } from './commands/lint.js';
 import type { Config } from './config.js';
-import { renderPush, summarizePush, renderLint } from './render.js';
+import { renderPush, renderReasonCells, summarizePush, renderLint } from './render.js';
 
 const plain = (res: PushResponse): string => stripVTControlCharacters(renderPush(res));
 
@@ -321,5 +321,17 @@ describe('renderLint', () => {
       'Showing first 1000 of 1800 cells. Narrow with --namespace / --locale, or use --json.',
     );
     expect(text(res({ summary, cells, truncated: true }), { severity: 'error' })).toContain('Showing first 1000 of 1500 cells.');
+  });
+});
+
+describe('reason texts', () => {
+  it('name no single target format', () => {
+    const lines = renderReasonCells(
+      ['ordinal', 'formattedArg', 'literalBrace', 'invalidKey'].map((reason) => ({ namespace: 'n', key: 'k', locale: 'en', reason })),
+      undefined,
+    ).join('\n');
+
+    expect(lines).not.toMatch(/Angular/);
+    expect(lines).toMatch(/valid resource name/);
   });
 });

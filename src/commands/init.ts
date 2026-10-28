@@ -126,7 +126,10 @@ export async function runInit(deps: InitDeps): Promise<ExitCode> {
   // A config that cannot resolve its own files would fail on the first push or pull: refuse to write it.
   let matches: Match[];
   try {
-    matches = await findFiles({ apiUrl, files, locales: {} }, deps.cwd);
+    matches = await findFiles({ apiUrl, files, locales: {} }, deps.cwd, {
+      // Without a key the default locale is unknown; init only checks that the pattern resolves.
+      defaultLocale: me === undefined ? 'und' : (me.project.defaultLocale ?? undefined),
+    });
   } catch (error) {
     if (!(error instanceof CliError)) throw error;
     deps.out(`${error.message} Nothing was written.`);

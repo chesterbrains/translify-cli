@@ -4,8 +4,9 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { Config } from '../config.js';
 import type { ExitCode } from '../errors.js';
 import type { Api } from '../http.js';
+import { pathContext } from '../context.js';
 import { CliError, EXIT, ONLY_APPROVED_NEEDS_WORKING } from '../errors.js';
-import { pathFor, toFsLocale, toTranslifyLocale } from '../patterns.js';
+import { pathFor, type PathContext, toFsLocale, toTranslifyLocale } from '../patterns.js';
 import { renderReasonCells, type ReasonCell } from '../render.js';
 
 interface PullResponse {
@@ -36,25 +37,28 @@ const readOrUndefined = async (path: string): Promise<string | undefined> =>
 
 const NESTED_CONFLICT: RegExp = /nested JSON cannot hold both/;
 
-/** The 422 `XLIFF_DIALECT_UNSUPPORTED` body: up to 100 cells, `total` counts them all. */
+/** The 422 `XLIFF_DIALECT_UNSUPPORTED` / `ANDROID_UNSUPPORTED` body: up to 100 cells, `total` counts them all. */
 interface DialectBody {
-  code: 'XLIFF_DIALECT_UNSUPPORTED';
+  code: 'XLIFF_DIALECT_UNSUPPORTED' | 'ANDROID_UNSUPPORTED';
   total: number;
   cells: ReasonCell[];
 }
 
 const isDialectUnsupported = (details: unknown): details is DialectBody =>
-  typeof details === 'object' && details !== null && (details as { code?: unknown }).code === 'XLIFF_DIALECT_UNSUPPORTED';
+  typeof details === 'object' &&
+  details !== null &&
+  ['XLIFF_DIALECT_UNSUPPORTED', 'ANDROID_UNSUPPORTED'].includes((details as { code?: string }).code ?? '');
 
 /** The server's one-line refusal, the cells grouped like `lint`, and the way out. */
 const dialectRefusal = (body: DialectBody, config: Config, dialect: string): CliError => {
   const cells: ReasonCell[] = Array.isArray(body.cells) ? body.cells : [];
+  const target: string = body.code === 'ANDROID_UNSUPPORTED' ? 'Android strings.xml' : `XLIFF for ${dialect}`;
   const lines: string[] = [
-    `Pull refused: ${body.total} translation(s) cannot be written as XLIFF for ${dialect}. Nothing was written.`,
+    `Pull refused: ${body.total} translation(s) cannot be written as ${target}. Nothing was written.`,
     ...renderReasonCells(cells, config),
   ];
   if (body.total > cells.length) lines.push(`Showing first ${cells.length} of ${body.total}.`);
-  lines.push('Split the text so each key is plain text with placeholders or one plural/select, or move the key to a JSON rule.');
+  lines.push('Split the text so each key is plain text with placeholders or one plural/select (Android: one plural), or move the key to a JSON rule.');
 
   return new CliError(EXIT.issues, lines.join('\n'), body);
 };
@@ -96,6 +100,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
   // Phase 1 plans every write; nothing touches disk until every request and check has passed.
   const plan: Array<{ path: string; absolute: string; content: string }> = [];
   const seen: Map<string, string> = new Map<string, string>();
+  const context: PathContext = await pathContext(deps.config, deps.api);
 
   // Namespaces a fixed-namespace rule owns must not also be written by a `{namespace}` rule.
   const claimed: Set<string> = new Set(
@@ -135,7 +140,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     for (const file of res.files) {
       if (wildcard && claimed.has(file.namespace)) continue;
 
-      const path: string = pathFor(rule, file.locale, file.namespace, deps.config);
+      const path: string = pathFor(rule, file.locale, file.namespace, deps.config, context);
       const absolute: string = resolve(deps.cwd, path);
       const rel: string = relative(resolve(deps.cwd), absolute);
       if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {

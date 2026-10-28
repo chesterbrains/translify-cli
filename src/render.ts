@@ -184,13 +184,17 @@ export interface ReasonCell {
 }
 
 const REASON_TEXT: Record<string, string> = {
-  mixedIcu: 'text next to a plural or select (Angular needs the whole message to be the ICU)',
+  mixedIcu: 'text next to a plural or select (the whole message must be the ICU)',
+  invalidPlural: 'a <plurals> without other, with an unknown quantity, or a repeated one',
+  unsupportedElement: 'an <item> without type="string", <array>, or an unknown element',
+  arrayGap: 'a string-array whose item keys are not contiguous from .0',
   multipleIcu: 'more than one plural or select in one message',
   nestedIcu: 'a plural or select inside another one',
-  ordinal: 'selectordinal has no Angular equivalent',
+  ordinal: 'selectordinal has no equivalent in the target format',
   invalidIcu: 'does not parse as ICU',
-  formattedArg: 'a number, date or time format has no Angular placeholder',
-  literalBrace: "a quoted literal brace ('{') cannot be loaded by Angular",
+  formattedArg: 'a number, date or time format with no equivalent in the target format',
+  literalBrace: "a quoted literal brace ('{') cannot be loaded by the target format",
+  invalidKey: 'the key is not a valid resource name for the target format (Android: letters, digits, _ and ., not starting with a digit)',
   syntax: 'the key uses printf or i18next placeholders, not ICU',
   exactMatch: 'an exact match (=0, =1) or offset has no Xcode plural category',
   shapeMismatch: 'the translation is not the same shape as the source (plural vs plain text, or a different plural argument)',

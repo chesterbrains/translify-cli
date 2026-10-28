@@ -43,6 +43,7 @@ export const CODE_EXIT: Record<string, ExitCode> = {
   APPROVED_ONLY_REQUIRES_WORKING: EXIT.failed,
   INVALID_CELLS: EXIT.issues,
   XLIFF_DIALECT_UNSUPPORTED: EXIT.issues,
+  ANDROID_UNSUPPORTED: EXIT.issues,
 };
 
 const exitFor = (status: number, code: string | undefined): ExitCode => {
@@ -105,6 +106,8 @@ const describeBody = (status: number, body: ErrorBody): string => {
       return ONLY_APPROVED_NEEDS_WORKING;
     case 'INVALID_CELLS':
       return `Publish refused: ${String(body.total)} translation(s) with placeholder errors would go live. Nothing was published.`;
+    case 'ANDROID_UNSUPPORTED':
+      return `Pull refused: ${String(body.total)} translation(s) cannot be written as Android strings.xml. Nothing was written.`;
     case 'XLIFF_DIALECT_UNSUPPORTED':
       return `Pull refused: ${String(body.total)} translation(s) cannot be written as Angular XLIFF. Nothing was written.`;
     case 'TRANSACTION_CONFLICT':

@@ -21,12 +21,12 @@
             "pattern": "\\{locale\\}",
             "description": "Path with {locale} and optionally {namespace}, using / separators."
           },
-          "format": { "enum": ["json", "xliff", "arb"] },
+          "format": { "enum": ["json", "xliff", "arb", "android"] },
           "namespace": {
             "type": "string",
             "pattern": "^[a-z0-9-]+$",
             "maxLength": 64,
-            "description": "Fixed namespace. Required when the pattern has no {namespace}, and always for arb."
+            "description": "Fixed namespace. Required when the pattern has no {namespace}, and always for arb and android."
           },
           "jsonStyle": { "enum": ["nested", "flat"], "description": "Only for format json. Defaults to nested." },
           "xliffDialect": {
@@ -42,7 +42,7 @@
         },
         "allOf": [
           {
-            "if": { "properties": { "format": { "const": "arb" } }, "required": ["format"] },
+            "if": { "properties": { "format": { "enum": ["arb", "android"] } }, "required": ["format"] },
             "then": { "required": ["namespace"] }
           },
           {
@@ -50,11 +50,11 @@
             "then": { "required": ["namespace"] }
           },
           {
-            "if": { "properties": { "format": { "enum": ["xliff", "arb"] } }, "required": ["format"] },
+            "if": { "properties": { "format": { "enum": ["xliff", "arb", "android"] } }, "required": ["format"] },
             "then": { "not": { "required": ["jsonStyle"] } }
           },
           {
-            "if": { "properties": { "format": { "enum": ["json", "arb"] } }, "required": ["format"] },
+            "if": { "properties": { "format": { "enum": ["json", "arb", "android"] } }, "required": ["format"] },
             "then": { "not": { "required": ["xliffDialect"] } }
           },
           {
