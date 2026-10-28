@@ -460,5 +460,7 @@ describe('runPull format strings', () => {
     expect(failure.exitCode).toBe(6);
     expect(failure.message).toMatch(/Pull refused: 1 translation\(s\) cannot be written as iOS \.strings\/\.stringsdict\. Nothing was written\./);
     expect(failure.message).toMatch(/exact match/);
+    expect(failure.message).toContain('one plural (`=0` allowed; no `select`), or move the key to a JSON rule.');
+    expect(failure.message).not.toContain('plural/select');
   });
 });

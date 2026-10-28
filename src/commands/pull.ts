@@ -63,7 +63,11 @@ const dialectRefusal = (body: DialectBody, config: Config, dialect: string): Cli
     ...renderReasonCells(cells, config),
   ];
   if (body.total > cells.length) lines.push(`Showing first ${cells.length} of ${body.total}.`);
-  lines.push('Split the text so each key is plain text with placeholders or one plural/select (Android: one plural), or move the key to a JSON rule.');
+  lines.push(
+    body.code === 'STRINGS_UNSUPPORTED'
+      ? 'Split the text so each key is plain text with placeholders or one plural (`=0` allowed; no `select`), or move the key to a JSON rule.'
+      : 'Split the text so each key is plain text with placeholders or one plural/select (Android: one plural), or move the key to a JSON rule.',
+  );
 
   return new CliError(EXIT.issues, lines.join('\n'), body);
 };

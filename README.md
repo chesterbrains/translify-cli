@@ -320,6 +320,12 @@ Workflow:
 3. `translify pull` writes the other `.lproj` files. iOS falls back to the development language for a key a locale does not
    have, so untranslated keys are left out.
 
+The first `pull` normalises the source file (drops header and `// MARK:` comments and the genstrings default comment, re-sorts
+entries); commit it before relying on `status` in CI.
+
+A namespace configured with only a `strings` rule never writes its plural keys (the server routes them to `.stringsdict`),
+and `status` will not notice; add the `stringsdict` rule when you add plurals.
+
 `Base.lproj` is not a locale: map it to the default language with `"locales": { "Base": "en-US" }`.
 
 Keys must be identifiers (letters, digits, `.`, `_`, `-`; at most 255 characters). Keys with spaces or characters outside that
@@ -351,7 +357,7 @@ fields are refused, and so is any field whose name contains `key`, `secret` or `
 | `$schema` | string | no | Schema URL for editor support. Ignored by the CLI. |
 | `apiUrl` | URL | yes | The Translify API base, ending in `/api`, e.g. `https://translify.tommasofeltrin.work/api`. |
 | `files` | array | yes | One rule per kind of translation file. Each rule has the fields below. |
-| `files[].pattern` | string | yes | Path relative to `translify.json`, with `/` separators. Must contain `{locale}` once and may contain `{namespace}` once, e.g. `locales/{locale}/{namespace}.json`. |
+| `files[].pattern` | string | yes | Path relative to `translify.json`, with `/` separators. Must contain `{locale}` once and may contain `{namespace}` once (not for `strings`/`stringsdict`), e.g. `locales/{locale}/{namespace}.json`. |
 | `files[].format` | `json` \| `xliff` \| `arb` \| `android` \| `strings` \| `stringsdict` | yes | File format: i18next JSON, XLIFF, Flutter ARB, Android `strings.xml` ([Android (strings.xml)](#android-stringsxml)) or iOS `.strings` / `.stringsdict` ([iOS (.strings / .stringsdict)](#ios-strings--stringsdict)). |
 | `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb`, `android`, `strings` and `stringsdict` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
 | `files[].jsonStyle` | `nested` \| `flat` | no | Only for `json`. `nested` (the default) writes `{ "a": { "b": "…" } }`, `flat` writes `{ "a.b": "…" }`. |

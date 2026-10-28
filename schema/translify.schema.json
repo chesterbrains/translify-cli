@@ -50,6 +50,10 @@
             "then": { "required": ["namespace"] }
           },
           {
+            "if": { "properties": { "format": { "enum": ["strings", "stringsdict"] } }, "required": ["format"] },
+            "then": { "properties": { "pattern": { "not": { "pattern": "\\{namespace\\}" } } } }
+          },
+          {
             "if": { "properties": { "format": { "enum": ["xliff", "arb", "android", "strings", "stringsdict"] } }, "required": ["format"] },
             "then": { "not": { "required": ["jsonStyle"] } }
           },
