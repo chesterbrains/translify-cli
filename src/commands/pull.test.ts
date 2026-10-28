@@ -396,3 +396,46 @@ describe('runPull xliffDialect xcode', () => {
     expect((failure as CliError).message).toMatch(/not the same shape/);
   });
 });
+
+describe('runPull format android', () => {
+  const withAndroid: Config = {
+    apiUrl: 'https://x/api',
+    files: [{ pattern: 'res/values-{locale}/strings.xml', format: 'android', namespace: 'strings' }],
+    locales: {},
+  };
+  const xml = (locale: string) => ({ locale, namespace: 'strings', format: 'android', content: '<resources/>\n' });
+
+  it('asks whoami once for the default locale and writes values/ and qualifiers', async () => {
+    const cwd = await tmp();
+    const client = {
+      get: vi.fn(async (path: string) =>
+        path === '/cli/v1/whoami'
+          ? { project: { defaultLocale: 'en' } }
+          : { files: [xml('en'), xml('pt-BR'), xml('sr-Latn')], warnings: [] },
+      ),
+    };
+    await runPull({}, { cwd, config: withAndroid, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'android', namespaces: 'strings' });
+    expect(client.get.mock.calls.filter(([path]) => path === '/cli/v1/whoami')).toHaveLength(1);
+    for (const dir of ['values', 'values-pt-rBR', 'values-b+sr+Latn']) {
+      expect(await readFile(join(cwd, `res/${dir}/strings.xml`), 'utf8')).toBe('<resources/>\n');
+    }
+  });
+
+  it('renders ANDROID_UNSUPPORTED like the dialect refusal, exit 6', async () => {
+    const body = { code: 'ANDROID_UNSUPPORTED', total: 1, cells: [{ namespace: 'strings', key: 'k', locale: 'en', reason: 'arrayGap' }] };
+    const client = {
+      get: vi.fn(async (path: string) => {
+        if (path === '/cli/v1/whoami') return { project: { defaultLocale: 'en' } };
+        throw new CliError(6, 'x', body);
+      }),
+    };
+
+    const failure = (await runPull({}, { cwd: await tmp(), config: withAndroid, api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
+
+    expect(failure.exitCode).toBe(6);
+    expect(failure.message).toMatch(/Android strings\.xml/);
+    expect(failure.message).toMatch(/not contiguous from \.0/);
+  });
+});

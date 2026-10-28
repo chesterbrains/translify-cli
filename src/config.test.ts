@@ -38,6 +38,19 @@ describe('loadConfig', () => {
     await expect(loadConfig(arb)).rejects.toThrow(/files\.0\.namespace/);
   });
 
+  it('accepts format android with a namespace and requires one', async () => {
+    const ok = await withConfig({
+      apiUrl: 'https://x/api',
+      files: [{ pattern: 'res/values-{locale}/strings.xml', format: 'android', namespace: 'strings' }],
+    });
+    expect((await loadConfig(ok)).files[0]?.format).toBe('android');
+    const bad = await withConfig({
+      apiUrl: 'https://x/api',
+      files: [{ pattern: 'res/{namespace}/values-{locale}/strings.xml', format: 'android' }],
+    });
+    await expect(loadConfig(bad)).rejects.toThrow(/files\.0\.namespace Android files need a fixed namespace/);
+  });
+
   it('rejects a malformed namespace', async () => {
     const root = await withConfig({
       apiUrl: 'https://x/api',

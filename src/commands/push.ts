@@ -5,6 +5,7 @@ import type { Config } from '../config.js';
 import type { ExitCode } from '../errors.js';
 import type { Api } from '../http.js';
 import type { Match } from '../patterns.js';
+import { pathContext } from '../context.js';
 import { CliError, EXIT } from '../errors.js';
 import { findFiles } from '../patterns.js';
 import { renderPush, summarizePush } from '../render.js';
@@ -141,7 +142,7 @@ const describeDamage = async (preview: PushResponse, opts: PushOptions, api: Api
 };
 
 export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCode> {
-  const matches: Match[] = (await findFiles(deps.config, deps.cwd)).filter(
+  const matches: Match[] = (await findFiles(deps.config, deps.cwd, await pathContext(deps.config, deps.api))).filter(
     (match) => opts.namespace === undefined || match.namespace === opts.namespace,
   );
   if (matches.length === 0) {

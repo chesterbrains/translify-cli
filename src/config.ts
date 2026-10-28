@@ -17,7 +17,7 @@ const fileRule = z
       .refine((value) => value.split('{locale}').length <= 2 && value.split('{namespace}').length <= 2, {
         message: 'may use each of {locale} and {namespace} only once',
       }),
-    format: z.enum(['json', 'xliff', 'arb']),
+    format: z.enum(['json', 'xliff', 'arb', 'android']),
     namespace: z.string().regex(NAMESPACE, 'must be lowercase kebab-case').max(64).optional(),
     jsonStyle: z.enum(['nested', 'flat']).optional(),
     xliffDialect: z.enum(['angular', 'xcode']).optional(),
@@ -28,6 +28,8 @@ const fileRule = z
     const hasPlaceholder: boolean = rule.pattern.includes('{namespace}');
     if (rule.format === 'arb' && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'ARB files need a fixed namespace' });
+    } else if (rule.format === 'android' && rule.namespace === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'Android files need a fixed namespace' });
     } else if (!hasPlaceholder && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'needed when the pattern has no {namespace}' });
     }

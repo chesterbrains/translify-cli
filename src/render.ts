@@ -184,7 +184,10 @@ export interface ReasonCell {
 }
 
 const REASON_TEXT: Record<string, string> = {
-  mixedIcu: 'text next to a plural or select (Angular needs the whole message to be the ICU)',
+  mixedIcu: 'text next to a plural or select (the whole message must be the ICU)',
+  invalidPlural: 'a <plurals> without other, with an unknown quantity, or a repeated one',
+  unsupportedElement: 'an <item> without type="string", <array>, or an unknown element',
+  arrayGap: 'a string-array whose item keys are not contiguous from .0',
   multipleIcu: 'more than one plural or select in one message',
   nestedIcu: 'a plural or select inside another one',
   ordinal: 'selectordinal has no Angular equivalent',
