@@ -231,4 +231,19 @@ describe('strings and stringsdict slot pairing', () => {
     const same: Config = config({ files: [rule('strings', 'strings'), rule('strings', 'strings')] });
     await expect(findFiles(same, root)).rejects.toThrow(/matched by more than one files rule/);
   });
+
+  it.each([
+    ['stringsdict', 'strings', 'strings'],
+    ['strings', 'stringsdict', 'stringsdict'],
+    ['strings', 'stringsdict', 'strings'],
+  ] as const)('refuses a third rule on a paired cell (%s, %s, %s)', async (a, b, c) => {
+    const root = await tree(['App/en.lproj/Localizable.strings', 'App/en.lproj/Localizable.stringsdict', 'App/en.lproj/Other.strings', 'App/en.lproj/Other.stringsdict']);
+    const third = (format: 'strings' | 'stringsdict', n: number) => ({
+      pattern: n === 3 ? `App/{locale}.lproj/Other.${format}` : `App/{locale}.lproj/Localizable.${format}`,
+      format,
+      namespace: 'localizable',
+    });
+    const cfg: Config = config({ files: [third(a, 1), third(b, 2), third(c, 3)] });
+    await expect(findFiles(cfg, root)).rejects.toThrow(CliError);
+  });
 });

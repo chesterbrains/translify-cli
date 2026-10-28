@@ -101,6 +101,8 @@ export async function findFiles(config: Config, cwd: string, context: PathContex
   // One file per (locale, namespace) cell, one rule per file; otherwise push sends a cell twice and pull skips one.
   const byPath = new Map<string, Match>();
   const byCell = new Map<string, Match>();
+  /** Cells already holding a strings + stringsdict pair: a third match is a clash. */
+  const paired = new Set<string>();
   for (const match of matches) {
     const samePath: Match | undefined = byPath.get(match.path);
     if (samePath !== undefined) {
@@ -110,6 +112,7 @@ export async function findFiles(config: Config, cwd: string, context: PathContex
     const sameCell: Match | undefined = byCell.get(cell);
     const pair: boolean =
       sameCell !== undefined &&
+      !paired.has(cell) &&
       ((sameCell.rule.format === 'strings' && match.rule.format === 'stringsdict') ||
         (sameCell.rule.format === 'stringsdict' && match.rule.format === 'strings'));
     if (sameCell !== undefined && !pair) {
@@ -128,7 +131,8 @@ export async function findFiles(config: Config, cwd: string, context: PathContex
       );
     }
     byPath.set(match.path, match);
-    if (!pair) byCell.set(cell, match);
+    if (pair) paired.add(cell);
+    else byCell.set(cell, match);
   }
 
   return matches;
