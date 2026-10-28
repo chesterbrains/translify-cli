@@ -232,15 +232,17 @@ Workflow:
 3. `translify pull` writes `values-it/strings.xml` and the rest. Android falls back to `values/` for a string a locale
    does not have, so untranslated keys are left out.
 
-What `pull` writes (arguments are positional, numbered by first appearance in the source, so a reordered translation keeps
-its meaning; the specifier comes from the push that created the key, else `%s` for text, `%d` for a plural's count, `%f`
-for a fraction):
+What `pull` writes (positions are kept exactly as the pushed `values/strings.xml` wrote them: `%2$s by %1$s` stays
+`%2$s by %1$s`, gaps like `%1$s %3$s` are kept, and a plural's count keeps its position, e.g. `%2$d songs by %1$s`. Only keys
+created in the web UI or from another format are numbered by first appearance in the source. Translations are written with
+the same positions as the source, so a reordered Italian keeps its meaning. The specifier comes from the push that created
+the key, else `%s` for text, `%d` for a plural's count, `%f` for a fraction):
 
 | Translify value | Written |
 |---|---|
 | `Hello, {name}` | `<string name="key">Hello, %1$s</string>` |
 | `{count, plural, one {# item} other {# items}}` (the whole message) | `<plurals name="key">` with `<item quantity="one">%1$d item</item>`, `<item quantity="other">%1$d items</item>` |
-| `Save 10% with {code}` | `Save 10%% with %1$s` (`%` is doubled in a message with a placeholder) |
+| `Save 10% with {code}` | `Save 10%% with %1$s` (`%` is written `%%` for every key that has placeholders) |
 | `colors.0`, `colors.1` pushed from a `<string-array>` | `<string-array name="colors">` with one `<item>` each; left out of a locale until every item is translated |
 | a description | `<!-- … -->` above the element, in the default-locale file |
 
@@ -248,7 +250,7 @@ Elements are sorted by key with a four-space indent, so `translify status` is by
 
 What `push` reads: `<string>`, `<plurals>` (one ICU plural, `other` required) and `<string-array>` (keys `name.0`, `name.1`, …).
 `%s` / `%1$s` → `{arg1}` (renamed to the key's own argument when the key already exists), `%d` → `{arg2}` or `#` inside a
-plural, `%.2f` → `{arg, number}`, `%%` → `%`. `<b>`, `<i>` and `<a href>` tags are kept as they are; `<xliff:g>` tags are
+plural, `%.2f` → `{arg, number}`, `%%` → `%` (always, whether or not the string has a placeholder). `<b>`, `<i>` and `<a href>` tags are kept as they are; `<xliff:g>` tags are
 dropped and their content kept. Escapes are read like Android does (`\'`, `\"`, `\n`, `\uXXXX`, quotes preserve
 whitespace) and written back the same way: apostrophes are always escaped (`\'`), a string with leading, trailing or
 doubled spaces is wrapped in quotes, `&`, `<` and `>` in text become entities. Resources that are not strings
