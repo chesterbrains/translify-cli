@@ -195,7 +195,7 @@ for a fraction):
 | untranslated | the unit has a `<source>` and no `<target>`, which Xcode shows as untranslated |
 
 What `push` reads: `%@` / `%1$@` → `{arg1}` (renamed to the key's own argument when the key already exists), `%lld` →
-`{arg2}` or `#` inside a plural, `%.2f` → `{arg, number}`, `%%` → `%`; `|==|plural.*` units → one ICU plural named `count`;
+`{arg2, number}` or `#` inside a plural, `%.2f` → `{arg, number}`, `%%` → `%`; `|==|plural.*` units → one ICU plural named `count`;
 a `%#@name@` substitution → the plural inside the sentence. The printf types are kept in the key's metadata for the next
 pull. Device variations (`|==|device.*`), unknown unit kinds and legacy `.strings`/`.stringsdict` exports are reported as
 `unsupportedVariation` and skipped.
@@ -318,7 +318,8 @@ Workflow:
    already have.
 2. Translate in Translify.
 3. `translify pull` writes the other `.lproj` files. iOS falls back to the development language for a key a locale does not
-   have, so untranslated keys are left out.
+   have, so untranslated keys are left out. On Xcode projects without synchronized folders, add a newly pulled
+   `<locale>.lproj` to the app target (drag it into Xcode, or add the localization in the project settings), or it is not bundled.
 
 The first `pull` normalises the source file (drops header and `// MARK:` comments and the genstrings default comment, re-sorts
 entries); commit it before relying on `status` in CI.

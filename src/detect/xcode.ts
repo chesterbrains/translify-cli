@@ -3,9 +3,8 @@ import { join, posix } from 'node:path';
 import fg from 'fast-glob';
 
 import type { FileRule } from '../config.js';
-import { kebab, NONE, ordinal, type Detection } from './shared.js';
+import { IGNORE, kebab, NONE, ordinal, type Detection } from './shared.js';
 
-const IGNORE: string[] = ['**/.build/**', '**/Pods/**', '**/node_modules/**', '**/DerivedData/**', '**/.git/**', '**/*.xcloc/**'];
 /** `LOCALE` from config.ts, with `_` allowed: that is how the locales map is used. */
 const LOCALE_FILE: RegExp = /^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})*$/;
 

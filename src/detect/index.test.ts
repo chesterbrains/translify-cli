@@ -81,4 +81,24 @@ describe('detectLayout', () => {
     expect(byFormat('stringsdict')).toEqual(['localizable-2']);
     expect(result.notes.some((note) => note.includes('Widget/{locale}.lproj/Localizable.strings') && note.includes('second'))).toBe(true);
   });
+
+  it('keeps three distinct namespaces when two .lproj tables meet an Xcode catalog', async () => {
+    const result = await detectLayout(
+      await tree({
+        'Localizable.xcstrings': '{}',
+        'A/en.lproj/Localizable.strings': '',
+        'A/en.lproj/Localizable.stringsdict': '',
+        'B/en.lproj/Localizable.strings': '',
+        'B/en.lproj/Localizable.stringsdict': '',
+      }),
+    );
+    const ns = (pattern: string) => result.rules.find((rule) => rule.pattern === pattern)?.namespace;
+    const a = ns('A/{locale}.lproj/Localizable.strings');
+    const b = ns('B/{locale}.lproj/Localizable.strings');
+    expect(ns('A/{locale}.lproj/Localizable.stringsdict')).toBe(a);
+    expect(ns('B/{locale}.lproj/Localizable.stringsdict')).toBe(b);
+    const xliff = result.rules.find((rule) => rule.format === 'xliff')?.namespace;
+    expect(xliff).toBe('localizable');
+    expect(new Set([xliff, a, b]).size).toBe(3);
+  });
 });

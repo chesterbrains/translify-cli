@@ -22,6 +22,7 @@ const dedupeNamespaces = (found: Detection[]): Detection => {
   for (const detection of found) {
     const renames: Map<string, string> = new Map();
     const own: Map<string, string> = new Map();
+    const taken: Set<string> = new Set(detection.rules.flatMap((rule) => (rule.namespace === undefined ? [] : [rule.namespace])));
     for (const rule of detection.rules) {
       const namespace: string | undefined = rule.namespace;
       if (namespace === undefined) {
@@ -34,8 +35,9 @@ const dedupeNamespaces = (found: Detection[]): Detection => {
         const first: string | undefined = owners.get(namespace);
         if (first !== undefined) {
           let n: number = 2;
-          while (owners.has(`${namespace}-${n}`)) n++;
+          while (owners.has(`${namespace}-${n}`) || taken.has(`${namespace}-${n}`)) n++;
           name = `${namespace}-${n}`;
+          taken.add(name);
           notes.push(`${rule.pattern} and ${first} would both be namespace ${namespace}: the ${ordinal(n)} one is namespace ${name}.`);
         }
         renames.set(namespace, name);
