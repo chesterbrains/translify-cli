@@ -289,7 +289,8 @@ to `.stringsdict`. Add two rules with the same `namespace`, one per format:
 ```
 
 `translify init` finds every `<locale>.lproj/<Table>.strings` / `.stringsdict` and writes the rules (namespace = table
-name, kebab-case); `init` only notes a table that exists in `Base.lproj` alone, so add the `locales` mapping yourself (see below). Projects on a String Catalog (`.xcstrings`) should use the
+name, kebab-case); `init` only notes a table that exists in `Base.lproj` alone, so add the `locales` mapping yourself
+(see below). Projects on a String Catalog (`.xcstrings`) should use the
 [Xcode (XLIFF)](#xcode-xliff) dialect instead: it round-trips the catalog through Xcode's own import and export, and this
 format is for projects that still ship `.strings` files.
 
@@ -321,8 +322,8 @@ Workflow:
 
 `Base.lproj` is not a locale: map it to the default language with `"locales": { "Base": "en-US" }`.
 
-Keys must be identifiers (letters, digits, `.`, `_`, `-`; at most 255 characters). Keys with spaces or punctuation
-(sentence keys such as `"Add to cart"`, English text used as the key) are refused as row error `invalidKey`; rename them
+Keys must be identifiers (letters, digits, `.`, `_`, `-`; at most 255 characters). Keys with spaces or characters outside that
+list (sentence keys such as `"Add to cart"`, English text used as the key) are refused as row error `invalidKey`; rename them
 to identifiers, or keep those files on an XLIFF rule.
 
 If one key appears in both the `.strings` and the `.stringsdict` of a locale, the push reports `duplicateKey` on the
