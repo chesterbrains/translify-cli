@@ -42,6 +42,14 @@ describe('README', () => {
     }
   });
 
+  it('documents the two iOS rules, the identifier-key rule and the stringsdict-wins note', () => {
+    const ios: string = section('iOS (.strings / .stringsdict)');
+
+    for (const needle of ['"format": "strings"', '"format": "stringsdict"', 'sentence keys', 'Base.lproj', 'stringsdict wins']) {
+      expect(ios, needle).toContain(needle);
+    }
+  });
+
   it('documents every translify.json field in the config reference', () => {
     const documented: string[] = rows(section('`translify.json` reference')).flatMap(([first]) => codesIn(first!));
     const fields: string[] = [

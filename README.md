@@ -272,6 +272,71 @@ shape differs from the source (plain text for a plural), keys whose placeholders
 keys with a `-` or a leading digit, and a string-array whose item keys are not contiguous from `.0`. Pushing a
 `<plurals>` without `other`, an unknown `quantity`, or an `<item>` without `type="string"` is a row error.
 
+## iOS (.strings / .stringsdict)
+
+Classic iOS and macOS projects keep strings in `<locale>.lproj/Localizable.strings` (plain text) and
+`<locale>.lproj/Localizable.stringsdict` (plurals). Translify holds one ICU value per key, so a key lives in one of the
+two files, decided by its **default-locale** value: plain text goes to `.strings`, a plural (or text with one plural) goes
+to `.stringsdict`. Add two rules with the same `namespace`, one per format:
+
+```json
+{
+  "files": [
+    { "pattern": "Sources/App/{locale}.lproj/Localizable.strings", "format": "strings", "namespace": "localizable" },
+    { "pattern": "Sources/App/{locale}.lproj/Localizable.stringsdict", "format": "stringsdict", "namespace": "localizable" }
+  ]
+}
+```
+
+`translify init` finds every `<locale>.lproj/<Table>.strings` / `.stringsdict` and writes the rules (namespace = table
+name, kebab-case; a `Base.lproj` table is mapped, see below). Projects on a String Catalog (`.xcstrings`) should use the
+[Xcode (XLIFF)](#xcode-xliff) dialect instead: it round-trips the catalog through Xcode's own import and export, and this
+format is for projects that still ship `.strings` files.
+
+What `pull` writes (arguments are positional Foundation printf, numbered by first appearance in the source; the specifier
+comes from the push that created the key, else `@` for text, `lld` for a plural's count or an integer, `f` for a fraction):
+
+| Translify value | Written |
+|---|---|
+| `Welcome` | `.strings`: `"key" = "Welcome";` |
+| `Hello, {name}` | `.strings`: `"key" = "Hello, %1$@";` |
+| `{n} of {total}` | `.strings`: `"key" = "%1$lld of %2$lld";` (positions follow the source, so a reordered translation keeps its meaning) |
+| `Save 10% with {code}` | `.strings`: `"key" = "Save 10%% with %1$@";` (`%` is written `%%` only for keys that have placeholders; push always reads `%%` as `%`) |
+| `{count, plural, =0 {No items} one {# item} other {# items}}` (the whole message) | `.stringsdict`: `NSStringLocalizedFormatKey` = `%1$#@count@` with one variable holding `zero` / `one` / `other` (`=0` is `zero`) |
+| `{name} has {count, plural, one {# song} other {# songs}}` | `.stringsdict`: the text stays in `NSStringLocalizedFormatKey` (`%1$@ has %2$#@count@`) and the plural is its variable |
+| a description | `/* … */` on the line directly above the entry, in the default-locale file only |
+
+`.strings` escapes `\"`, `\\`, `\n`, `\t`, `\r` and `\Uxxxx`; push reads them back. Entries are sorted by key with a blank
+line between them, so `translify status` is byte-stable. A comment is the key's description only when it sits directly
+above the entry (`/* … */` or `// …`, no blank line in between); a trailing comment on the same line is ignored, and
+Xcode's `No comment provided by engineer.` is dropped.
+
+Workflow:
+
+1. `translify push` sends `en.lproj/Localizable.strings` and `.stringsdict` (the default locale) and any other `.lproj` you
+   already have.
+2. Translate in Translify.
+3. `translify pull` writes the other `.lproj` files. iOS falls back to the development language for a key a locale does not
+   have, so untranslated keys are left out.
+
+`Base.lproj` is not a locale: map it to the default language with `"locales": { "Base": "en-US" }`.
+
+Keys must be identifiers (letters, digits, `.`, `_`, `-`). Keys that are sentences (`"Add to cart"`, English text used as the key) are refused as row error `invalidKey`; rename them to identifiers, or keep those files on an XLIFF rule. In short: sentence keys are not supported.
+
+If one key appears in both the `.strings` and the `.stringsdict` of a locale, the push reports `duplicateKey` on the
+`.strings` row: at runtime stringsdict wins, so that is the entry Translify keeps.
+
+`--prune` with only one file of the pair archives only keys of that file's shape: a `.strings` push never trashes plural keys
+and a `.stringsdict` push never trashes plain keys. Push both rules together to prune the whole namespace. The
+empty-source safeguard looks at both files of a namespace.
+
+UTF-16 files (Xcode's default for older projects) are refused with `File is UTF-16; convert it to UTF-8 (iconv -f UTF-16 -t UTF-8)`.
+
+Not supported in this version (the pull is refused with `STRINGS_UNSUPPORTED`, the output lists the cells and why):
+`select` and `selectordinal`, exact matches other than `=0`, `offset`, two plurals in one message, nested plurals, number
+formats without a known printf type (e.g. currency), a translation whose shape differs from the source (plain text for a
+plural), and keys whose placeholders are printf or i18next rather than ICU.
+
 ## `translify.json` reference
 
 `translify.json` lives in the repository root; every command reads it from the current directory. The
@@ -284,8 +349,8 @@ fields are refused, and so is any field whose name contains `key`, `secret` or `
 | `apiUrl` | URL | yes | The Translify API base, ending in `/api`, e.g. `https://translify.tommasofeltrin.work/api`. |
 | `files` | array | yes | One rule per kind of translation file. Each rule has the fields below. |
 | `files[].pattern` | string | yes | Path relative to `translify.json`, with `/` separators. Must contain `{locale}` once and may contain `{namespace}` once, e.g. `locales/{locale}/{namespace}.json`. |
-| `files[].format` | `json` \| `xliff` \| `arb` \| `android` | yes | File format: i18next JSON, XLIFF, Flutter ARB or Android `strings.xml` ([Android (strings.xml)](#android-stringsxml)). |
-| `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb` and `android` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
+| `files[].format` | `json` \| `xliff` \| `arb` \| `android` \| `strings` \| `stringsdict` | yes | File format: i18next JSON, XLIFF, Flutter ARB, Android `strings.xml` ([Android (strings.xml)](#android-stringsxml)) or iOS `.strings` / `.stringsdict` ([iOS (.strings / .stringsdict)](#ios-strings--stringsdict)). |
+| `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb`, `android`, `strings` and `stringsdict` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
 | `files[].jsonStyle` | `nested` \| `flat` | no | Only for `json`. `nested` (the default) writes `{ "a": { "b": "…" } }`, `flat` writes `{ "a.b": "…" }`. |
 | `files[].xliffDialect` | `angular` \| `xcode` | no | Only for `xliff`. `angular` writes `@angular/localize` placeholders on pull and reads `ng extract-i18n` output on push ([Angular (XLIFF)](#angular-xliff)); `xcode` writes XLIFF 1.2 for String Catalogs and reads `xcodebuild -exportLocalizations` output ([Xcode (XLIFF)](#xcode-xliff)). |
 | `files[].xliffOriginal` | string | with `xliffDialect: "xcode"` | The String Catalog path Xcode knows, e.g. `Sources/App/Localizable.xcstrings`; written to `<file original>`. Xcode imports nothing when it does not match the project. Only with `xcode`. |
@@ -518,7 +583,7 @@ project when a rule uses `{namespace}`. It needs a key with the `pull` scope.
 | 3 | Plan quota exceeded |
 | 4 | Network failure, server error, push too large, CLI too old, transaction conflict, or rate limited after 3 retries |
 | 5 | `publish --fail-on-withheld`: the publish went through, but the review gate withheld some translations |
-| 6 | Placeholder errors: `lint` found them (or more warnings than `--max-warnings`), `publish` refused because translations with errors would go live, or `pull` refused an Angular XLIFF rule |
+| 6 | Placeholder errors: `lint` found them (or more warnings than `--max-warnings`), `publish` refused because translations with errors would go live, or `pull` refused an Angular XLIFF rule, or a .strings/.stringsdict rule |
 
 The server's error `code` decides the exit code first; the HTTP status is only used for codes the CLI does not know.
 
@@ -548,6 +613,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `INVALID_CELLS` | 6 | `publish` refused: translations that would go live have placeholder errors. Nothing was published; the output lists them like `lint` does. Fix them in Translify, or re-run with `--allow-errors` to publish anyway (recorded in the activity log). |
 | `XLIFF_DIALECT_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written in the rule's XLIFF dialect (Angular: text beside a plural, nested plurals, number/date formats; Xcode: `select`, `=0`/`offset`, a translation of a different shape; both: printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Angular (XLIFF)](#angular-xliff) and [Xcode (XLIFF)](#xcode-xliff). |
 | `ANDROID_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Android `strings.xml` (`select`, `=0`/`offset`, text around a plural, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys, a key with `-` or a leading digit, a gapped array). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Android (strings.xml)](#android-stringsxml). |
+| `STRINGS_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as iOS `.strings` / `.stringsdict` (`select`, exact matches other than `=0`, `offset`, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [iOS (.strings / .stringsdict)](#ios-strings--stringsdict). |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |
