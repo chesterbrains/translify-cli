@@ -133,6 +133,37 @@ describe('Android qualifiers', () => {
   });
 });
 
+describe('Android qualifier symmetry', () => {
+  it.each(['it', 'pt-rBR', 'b+sr+Latn', 'b+fil', 'b+zh+Hans+CN'])('round-trips %s', (qualifier) => {
+    expect(toAndroidQualifier(fromAndroidQualifier(qualifier))).toBe(qualifier);
+  });
+
+  it('does not read a three-letter language outside b+ as a locale', async () => {
+    const cfg: Config = {
+      apiUrl: 'https://x/api',
+      files: [{ pattern: 'res/values-{locale}/strings.xml', format: 'android', namespace: 'strings' }],
+      locales: {},
+    };
+    const root = await tree(['res/values/strings.xml', 'res/values-fil/strings.xml', 'res/values-fil-rPH/strings.xml', 'res/values-b+fil+PH/strings.xml']);
+    const found = await findFiles(cfg, root, { defaultLocale: 'en' });
+
+    expect(found.map((match) => match.locale).sort()).toEqual(['en', 'fil-PH']);
+  });
+
+  it('names values/ plus values-<default> as a default-locale clash', async () => {
+    const cfg: Config = {
+      apiUrl: 'https://x/api',
+      files: [{ pattern: 'res/values-{locale}/strings.xml', format: 'android', namespace: 'strings' }],
+      locales: {},
+    };
+    const root = await tree(['res/values/strings.xml', 'res/values-en/strings.xml']);
+
+    await expect(findFiles(cfg, root, { defaultLocale: 'en' })).rejects.toThrow(
+      'res/values/strings.xml and res/values-en/strings.xml both hold the default locale en: Android reads values/ as the default, so remove values-en/ or change the project default locale',
+    );
+  });
+});
+
 describe('android rules', () => {
   const android = (over: Partial<Config> = {}): Config =>
     config({

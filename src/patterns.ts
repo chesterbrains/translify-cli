@@ -32,10 +32,10 @@ export const toAndroidQualifier = (code: string): string => {
 };
 
 export const fromAndroidQualifier = (qualifier: string): string =>
-  qualifier.startsWith('b+') ? qualifier.slice(2).split('+').join('-') : qualifier.replace(/^([A-Za-z]{2,3})-r([A-Za-z]{2})$/, '$1-$2');
+  qualifier.startsWith('b+') ? qualifier.slice(2).split('+').join('-') : qualifier.replace(/^([A-Za-z]{2})-r([A-Za-z]{2})$/, '$1-$2');
 
-/** A locale qualifier, not `night`, `land`, `v21` or `sw600dp`: 2-3 letters with an optional region, or BCP 47 `b+…`. */
-const ANDROID_LOCALE: string = '(?<locale>[a-z]{2,3}(?:-r[A-Z]{2})?|b\\+[A-Za-z0-9+]+)';
+/** A locale qualifier, not `night`, `land`, `v21` or `sw600dp`: 2 letters with an optional region, or BCP 47 `b+…`. */
+const ANDROID_LOCALE: string = '(?<locale>[a-z]{2}(?:-r[A-Z]{2})?|b\\+[A-Za-z0-9+]+)';
 
 /**
  * `locales/{locale}/{namespace}.json` → a glob and a regex with named groups. An Android rule's `-{locale}`
@@ -74,6 +74,8 @@ export const toFsLocale = (code: string, config: Config): string =>
 
 export async function findFiles(config: Config, cwd: string, context: PathContext = {}): Promise<Match[]> {
   const matches: Match[] = [];
+  /** Android: the qualifier each path carried, '' for plain `values/`. */
+  const qualifiers: Map<string, string> = new Map();
 
   for (const rule of config.files) {
     const android: boolean = rule.format === 'android';
@@ -91,6 +93,7 @@ export async function findFiles(config: Config, cwd: string, context: PathContex
           ? (context.defaultLocale as string)
           : toTranslifyLocale(android ? fromAndroidQualifier(groups.locale) : groups.locale, config);
 
+      if (android) qualifiers.set(path, groups.locale ?? '');
       matches.push({ path, locale, namespace, rule });
     }
   }
@@ -106,6 +109,15 @@ export async function findFiles(config: Config, cwd: string, context: PathContex
     const cell = `${match.locale}\u0000${match.namespace}`;
     const sameCell: Match | undefined = byCell.get(cell);
     if (sameCell !== undefined) {
+      const mine: string | undefined = qualifiers.get(match.path);
+      const theirs: string | undefined = qualifiers.get(sameCell.path);
+      if (mine !== undefined && theirs !== undefined && (mine === '') !== (theirs === '')) {
+        const [plain, named]: [Match, Match] = mine === '' ? [match, sameCell] : [sameCell, match];
+        throw new CliError(
+          EXIT.failed,
+          `${plain.path} and ${named.path} both hold the default locale ${match.locale}: Android reads values/ as the default, so remove values-${qualifiers.get(named.path)}/ or change the project default locale`,
+        );
+      }
       throw new CliError(
         EXIT.failed,
         `${sameCell.path} and ${match.path} both map to locale ${match.locale}, namespace ${match.namespace}. Fix the "locales" map or remove one file.`,

@@ -68,4 +68,20 @@ describe('detectAndroid', () => {
     expect(found.notes).toHaveLength(1);
     expect(found.notes[0]).toMatch(/app\/src\/main\/res.*lib\/src\/main\/res|Two modules/);
   });
+
+  it('gives a file name used by two modules a namespace from the module directory', async () => {
+    const cwd: string = await tree({
+      'app/src/main/res/values/strings.xml': RES,
+      'lib/src/main/res/values/strings.xml': RES,
+      'lib/src/main/res/values/plurals.xml': RES,
+    });
+    const found = await detectAndroid(cwd);
+
+    expect(found.rules.map((r) => `${r.pattern} ${r.namespace}`)).toEqual([
+      'app/src/main/res/values-{locale}/strings.xml app-strings',
+      'lib/src/main/res/values-{locale}/plurals.xml plurals',
+      'lib/src/main/res/values-{locale}/strings.xml lib-strings',
+    ]);
+    expect(found.notes).toHaveLength(1);
+  });
 });

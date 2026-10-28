@@ -28,6 +28,20 @@ export async function detectAndroid(cwd: string): Promise<Detection> {
   }
 
   if (rules.length === 0) return NONE;
+  // A file name used by two modules would collide on one namespace: prefix it with the module directory.
+  const counts: Map<string, number> = new Map();
+  for (const rule of rules) counts.set(rule.namespace as string, (counts.get(rule.namespace as string) ?? 0) + 1);
+  const taken: Set<string> = new Set(rules.map((rule) => rule.namespace as string));
+  for (const rule of rules) {
+    const base: string = rule.namespace as string;
+    if ((counts.get(base) ?? 0) < 2) continue;
+    const module: string = kebab(rule.pattern.split('/').find((segment) => !['src', 'main', 'res'].includes(segment)) ?? '');
+    const wanted: string = module === '' ? base : `${module}-${base}`.slice(0, 60);
+    let candidate: string = wanted;
+    for (let n = 2; taken.has(candidate) && candidate !== base; n++) candidate = `${wanted}-${n}`;
+    taken.add(candidate);
+    rule.namespace = candidate;
+  }
   const notes: string[] = [];
   if (resDirs.size > 1) {
     notes.push(`Several Android modules hold a values/ directory (${[...resDirs].join(', ')}): each file gets its own rule, and a name used in two modules needs its own namespace in translify.json.`);
