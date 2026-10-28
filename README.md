@@ -289,18 +289,18 @@ to `.stringsdict`. Add two rules with the same `namespace`, one per format:
 ```
 
 `translify init` finds every `<locale>.lproj/<Table>.strings` / `.stringsdict` and writes the rules (namespace = table
-name, kebab-case; a `Base.lproj` table is mapped, see below). Projects on a String Catalog (`.xcstrings`) should use the
+name, kebab-case); `init` only notes a table that exists in `Base.lproj` alone, so add the `locales` mapping yourself (see below). Projects on a String Catalog (`.xcstrings`) should use the
 [Xcode (XLIFF)](#xcode-xliff) dialect instead: it round-trips the catalog through Xcode's own import and export, and this
 format is for projects that still ship `.strings` files.
 
 What `pull` writes (arguments are positional Foundation printf, numbered by first appearance in the source; the specifier
-comes from the push that created the key, else `@` for text, `lld` for a plural's count or an integer, `f` for a fraction):
+comes from the push that created the key, else `@` for text, `lld` for a plural's count or `{n, number}`, `f` for a fraction):
 
 | Translify value | Written |
 |---|---|
 | `Welcome` | `.strings`: `"key" = "Welcome";` |
 | `Hello, {name}` | `.strings`: `"key" = "Hello, %1$@";` |
-| `{n} of {total}` | `.strings`: `"key" = "%1$lld of %2$lld";` (positions follow the source, so a reordered translation keeps its meaning) |
+| `{n, number} of {total, number}` | `.strings`: `"key" = "%1$lld of %2$lld";` (positions follow the source, so a reordered translation keeps its meaning) |
 | `Save 10% with {code}` | `.strings`: `"key" = "Save 10%% with %1$@";` (`%` is written `%%` only for keys that have placeholders; push always reads `%%` as `%`) |
 | `{count, plural, =0 {No items} one {# item} other {# items}}` (the whole message) | `.stringsdict`: `NSStringLocalizedFormatKey` = `%1$#@count@` with one variable holding `zero` / `one` / `other` (`=0` is `zero`) |
 | `{name} has {count, plural, one {# song} other {# songs}}` | `.stringsdict`: the text stays in `NSStringLocalizedFormatKey` (`%1$@ has %2$#@count@`) and the plural is its variable |
@@ -321,7 +321,9 @@ Workflow:
 
 `Base.lproj` is not a locale: map it to the default language with `"locales": { "Base": "en-US" }`.
 
-Keys must be identifiers (letters, digits, `.`, `_`, `-`). Keys that are sentences (`"Add to cart"`, English text used as the key) are refused as row error `invalidKey`; rename them to identifiers, or keep those files on an XLIFF rule. In short: sentence keys are not supported.
+Keys must be identifiers (letters, digits, `.`, `_`, `-`; at most 255 characters). Keys with spaces or punctuation
+(sentence keys such as `"Add to cart"`, English text used as the key) are refused as row error `invalidKey`; rename them
+to identifiers, or keep those files on an XLIFF rule.
 
 If one key appears in both the `.strings` and the `.stringsdict` of a locale, the push reports `duplicateKey` on the
 `.strings` row: at runtime stringsdict wins, so that is the entry Translify keeps.
@@ -583,7 +585,7 @@ project when a rule uses `{namespace}`. It needs a key with the `pull` scope.
 | 3 | Plan quota exceeded |
 | 4 | Network failure, server error, push too large, CLI too old, transaction conflict, or rate limited after 3 retries |
 | 5 | `publish --fail-on-withheld`: the publish went through, but the review gate withheld some translations |
-| 6 | Placeholder errors: `lint` found them (or more warnings than `--max-warnings`), `publish` refused because translations with errors would go live, or `pull` refused an Angular XLIFF rule, or a .strings/.stringsdict rule |
+| 6 | Placeholder errors: `lint` found them (or more warnings than `--max-warnings`), `publish` refused because translations with errors would go live, or `pull` refused an Angular/Xcode XLIFF, Android or iOS rule |
 
 The server's error `code` decides the exit code first; the HTTP status is only used for codes the CLI does not know.
 
