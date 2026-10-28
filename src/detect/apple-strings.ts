@@ -12,7 +12,7 @@ interface Table {
   lprojs: Set<string>;
   dict: boolean;
   plain: boolean;
-  /** An Interface Builder file (`Base.lproj/<Table>.storyboard` / `.xib`) sits next to the table. */
+  /** An Interface Builder file (`<Table>.storyboard` / `.xib`) sits next to the table. */
   ib: boolean;
 }
 
@@ -23,7 +23,7 @@ const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Legacy `.lproj` string tables: one `strings` rule per table, plus `stringsdict` when plurals exist. */
 export async function detectAppleStrings(cwd: string): Promise<Detection> {
-  const files: string[] = await fg(['**/*.lproj/*.strings', '**/*.lproj/*.stringsdict', '**/Base.lproj/*.storyboard', '**/Base.lproj/*.xib'], {
+  const files: string[] = await fg(['**/*.lproj/*.strings', '**/*.lproj/*.stringsdict', '**/*.lproj/*.storyboard', '**/*.lproj/*.xib'], {
     cwd,
     onlyFiles: true,
     dot: false,
@@ -56,7 +56,7 @@ export async function detectAppleStrings(cwd: string): Promise<Detection> {
       notes.push(`${table}.strings localizes Interface Builder; not managed.`);
       continue;
     }
-    if (![...lprojs].some((name) => SOURCE_LPROJ.test(name))) {
+    if (table === 'InfoPlist' && ![...lprojs].some((name) => SOURCE_LPROJ.test(name))) {
       notes.push(`${table}.strings has no source-language file; not managed.`);
       continue;
     }

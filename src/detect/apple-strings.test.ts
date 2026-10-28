@@ -110,7 +110,13 @@ describe('detectAppleStrings', () => {
     expect(found.notes).toContain('Cell.strings localizes Interface Builder; not managed.');
   });
 
-  it('skips a table with no source-language file', async () => {
+  it('manages a table whatever its .lproj names are', async () => {
+    const found = await detectAppleStrings(await tree(['it.lproj/Localizable.strings', 'de.lproj/Localizable.strings']));
+    expect(found.rules).toEqual([{ pattern: '{locale}.lproj/Localizable.strings', format: 'strings', namespace: 'localizable' }]);
+    expect(found.notes).toEqual([]);
+  });
+
+  it('skips InfoPlist with no source-language file', async () => {
     const found = await detectAppleStrings(await tree(['it.lproj/InfoPlist.strings', 'en.lproj/Localizable.strings']));
     expect(found.rules.map((r) => r.namespace)).toEqual(['localizable']);
     expect(found.notes).toEqual(['InfoPlist.strings has no source-language file; not managed.']);
