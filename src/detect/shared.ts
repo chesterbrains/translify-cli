@@ -19,3 +19,6 @@ export const kebab = (name: string): string =>
 
 /** Patterns are written with `/`; a Windows-edited path still becomes one. */
 export const posixPath = (value: string): string => value.replaceAll('\\', '/').replace(/^(\.\/)+/, '');
+
+/** 2 → `second`, 3 → `third`, then `4th`, `5th`… */
+export const ordinal = (n: number): string => (n === 2 ? 'second' : n === 3 ? 'third' : `${n}th`);

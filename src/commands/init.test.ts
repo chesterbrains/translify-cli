@@ -84,7 +84,7 @@ describe('runInit: output file', () => {
 
     expect(await runInit(d)).toBe(0);
     await expect(loadConfig(cwd)).resolves.toMatchObject({ files: [expect.any(Object)] });
-    expect(out.join('\n')).toMatch(/No i18next, Flutter, Angular or Xcode layout found/);
+    expect(out.join('\n')).toMatch(/No i18next, Flutter, Angular, Xcode, Android or iOS \(\.lproj\) layout found/);
   });
 
   it('writes nothing when the preview is declined', async () => {

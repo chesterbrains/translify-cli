@@ -39,7 +39,7 @@ const NESTED_CONFLICT: RegExp = /nested JSON cannot hold both/;
 
 /** The 422 `XLIFF_DIALECT_UNSUPPORTED` / `ANDROID_UNSUPPORTED` body: up to 100 cells, `total` counts them all. */
 interface DialectBody {
-  code: 'XLIFF_DIALECT_UNSUPPORTED' | 'ANDROID_UNSUPPORTED';
+  code: 'XLIFF_DIALECT_UNSUPPORTED' | 'ANDROID_UNSUPPORTED' | 'STRINGS_UNSUPPORTED';
   total: number;
   cells: ReasonCell[];
 }
@@ -47,18 +47,27 @@ interface DialectBody {
 const isDialectUnsupported = (details: unknown): details is DialectBody =>
   typeof details === 'object' &&
   details !== null &&
-  ['XLIFF_DIALECT_UNSUPPORTED', 'ANDROID_UNSUPPORTED'].includes((details as { code?: string }).code ?? '');
+  ['XLIFF_DIALECT_UNSUPPORTED', 'ANDROID_UNSUPPORTED', 'STRINGS_UNSUPPORTED'].includes((details as { code?: string }).code ?? '');
 
 /** The server's one-line refusal, the cells grouped like `lint`, and the way out. */
 const dialectRefusal = (body: DialectBody, config: Config, dialect: string): CliError => {
   const cells: ReasonCell[] = Array.isArray(body.cells) ? body.cells : [];
-  const target: string = body.code === 'ANDROID_UNSUPPORTED' ? 'Android strings.xml' : `XLIFF for ${dialect}`;
+  const target: string =
+    body.code === 'ANDROID_UNSUPPORTED'
+      ? 'Android strings.xml'
+      : body.code === 'STRINGS_UNSUPPORTED'
+        ? 'iOS .strings/.stringsdict'
+        : `XLIFF for ${dialect}`;
   const lines: string[] = [
     `Pull refused: ${body.total} translation(s) cannot be written as ${target}. Nothing was written.`,
     ...renderReasonCells(cells, config),
   ];
   if (body.total > cells.length) lines.push(`Showing first ${cells.length} of ${body.total}.`);
-  lines.push('Split the text so each key is plain text with placeholders or one plural/select (Android: one plural), or move the key to a JSON rule.');
+  lines.push(
+    body.code === 'STRINGS_UNSUPPORTED'
+      ? 'Split the text so each key is plain text with placeholders or one plural (`=0` allowed; no `select`), or move the key to a JSON rule.'
+      : 'Split the text so each key is plain text with placeholders or one plural/select (Android: one plural), or move the key to a JSON rule.',
+  );
 
   return new CliError(EXIT.issues, lines.join('\n'), body);
 };

@@ -3,7 +3,7 @@ import { join, posix } from 'node:path';
 import fg from 'fast-glob';
 
 import type { FileRule } from '../config.js';
-import { kebab, NONE, type Detection } from './shared.js';
+import { kebab, NONE, ordinal, type Detection } from './shared.js';
 
 const IGNORE: string[] = ['**/.build/**', '**/Pods/**', '**/node_modules/**', '**/DerivedData/**', '**/.git/**', '**/*.xcloc/**'];
 /** `LOCALE` from config.ts, with `_` allowed: that is how the locales map is used. */
@@ -37,7 +37,7 @@ const namespaces = (catalogs: string[], notes: string[]): string[] => {
       return base;
     }
     const namespace: string = `${base}-${count}`;
-    notes.push(`Two catalogs are named ${bases.get(base) ?? catalog}: the ${count === 2 ? 'second' : `${count}th`} one is namespace ${namespace}.`);
+    notes.push(`Two catalogs are named ${bases.get(base) ?? catalog}: the ${ordinal(count)} one is namespace ${namespace}.`);
 
     return namespace;
   });

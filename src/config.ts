@@ -17,7 +17,7 @@ const fileRule = z
       .refine((value) => value.split('{locale}').length <= 2 && value.split('{namespace}').length <= 2, {
         message: 'may use each of {locale} and {namespace} only once',
       }),
-    format: z.enum(['json', 'xliff', 'arb', 'android']),
+    format: z.enum(['json', 'xliff', 'arb', 'android', 'strings', 'stringsdict']),
     namespace: z.string().regex(NAMESPACE, 'must be lowercase kebab-case').max(64).optional(),
     jsonStyle: z.enum(['nested', 'flat']).optional(),
     xliffDialect: z.enum(['angular', 'xcode']).optional(),
@@ -30,8 +30,13 @@ const fileRule = z
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'ARB files need a fixed namespace' });
     } else if (rule.format === 'android' && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'Android files need a fixed namespace' });
+    } else if ((rule.format === 'strings' || rule.format === 'stringsdict') && rule.namespace === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['namespace'], message: '.strings files need a fixed namespace' });
     } else if (!hasPlaceholder && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'needed when the pattern has no {namespace}' });
+    }
+    if (hasPlaceholder && (rule.format === 'strings' || rule.format === 'stringsdict')) {
+      ctx.addIssue({ code: 'custom', path: ['pattern'], message: `{namespace} does not apply to format "${rule.format}"` });
     }
     if (rule.jsonStyle !== undefined && rule.format !== 'json') {
       ctx.addIssue({ code: 'custom', path: ['jsonStyle'], message: 'only applies to format "json"' });

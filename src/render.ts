@@ -196,7 +196,7 @@ const REASON_TEXT: Record<string, string> = {
   literalBrace: "a quoted literal brace ('{') cannot be loaded by the target format",
   invalidKey: 'the key is not a valid resource name for the target format (Android: letters, digits, _ and ., not starting with a digit)',
   syntax: 'the key uses printf or i18next placeholders, not ICU',
-  exactMatch: 'an exact match (=0, =1) or offset has no Xcode plural category',
+  exactMatch: 'an exact match other than =0 (iOS), any exact match (Xcode XLIFF, Android), or offset has no plural category',
   shapeMismatch: 'the translation is not the same shape as the source (plural vs plain text, or a different plural argument)',
   unsupportedVariation: 'a device variation or an unknown |==| unit (not supported)',
 };

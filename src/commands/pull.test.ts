@@ -439,3 +439,28 @@ describe('runPull format android', () => {
     expect(failure.message).toMatch(/not contiguous from \.0/);
   });
 });
+
+describe('runPull format strings', () => {
+  it('renders STRINGS_UNSUPPORTED like the dialect refusal, exit 6', async () => {
+    const config: Config = {
+      apiUrl: 'https://x/api',
+      files: [{ pattern: 'App/{locale}.lproj/Localizable.stringsdict', format: 'stringsdict', namespace: 'localizable' }],
+      locales: {},
+    };
+    const body = { code: 'STRINGS_UNSUPPORTED', total: 1, cells: [{ namespace: 'localizable', key: 'k', locale: 'en', reason: 'exactMatch' }] };
+    const client = {
+      get: vi.fn(async (path: string) => {
+        if (path === '/cli/v1/whoami') return { project: { defaultLocale: 'en' } };
+        throw new CliError(6, 'x', body);
+      }),
+    };
+
+    const failure = (await runPull({}, { cwd: await tmp(), config, api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
+
+    expect(failure.exitCode).toBe(6);
+    expect(failure.message).toMatch(/Pull refused: 1 translation\(s\) cannot be written as iOS \.strings\/\.stringsdict\. Nothing was written\./);
+    expect(failure.message).toMatch(/exact match/);
+    expect(failure.message).toContain('one plural (`=0` allowed; no `select`), or move the key to a JSON rule.');
+    expect(failure.message).not.toContain('plural/select');
+  });
+});

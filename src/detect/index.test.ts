@@ -72,4 +72,13 @@ describe('detectLayout', () => {
   it('returns nothing for an unknown layout', async () => {
     expect(await detectLayout(await tree({ 'README.md': '' }))).toEqual({ rules: [], notes: [] });
   });
+
+  it('renames a .lproj namespace that an Xcode catalog already took', async () => {
+    const result = await detectLayout(await tree({ 'App/Localizable.xcstrings': '{}', 'Widget/en.lproj/Localizable.strings': '', 'Widget/en.lproj/Localizable.stringsdict': '' }));
+    const byFormat = (format: string) => result.rules.filter((rule) => rule.format === format).map((rule) => rule.namespace);
+    expect(byFormat('xliff')).toEqual(['localizable']);
+    expect(byFormat('strings')).toEqual(['localizable-2']);
+    expect(byFormat('stringsdict')).toEqual(['localizable-2']);
+    expect(result.notes.some((note) => note.includes('Widget/{locale}.lproj/Localizable.strings') && note.includes('second'))).toBe(true);
+  });
 });
