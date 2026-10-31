@@ -393,7 +393,8 @@ What `pull` writes (dotted keys nest, `#` in a plural becomes `%{count}`):
 
 A plural is a mapping of categories only (`other` required) and its count argument must be named `count`. `zero:` is `=0`
 only for a locale with no CLDR `zero` category (English, Italian); for a locale that has one (Arabic) `zero` is `zero` and
-`=0` is refused. A literal `%%` is kept exactly as written, so a pulled file pushed back is unchanged.
+`=0` is refused. A literal `%%` is kept exactly as written, so a pulled file pushed back is unchanged. A literal `%` that
+sits directly before an argument or a literal `{` gets one extra `%` on pull so Rails still reads it as text: ICU `%{p}` is written `%%%{p}`.
 
 Framework data: Rails files hold more than strings, and Translify keeps it. A list of strings is a set of keys `name.0`,
 `name.1`, … (`nil` items such as the leading `~` of rails-i18n `date.month_names` are remembered, not given a key). Raw
@@ -417,7 +418,7 @@ The first `pull` normalizes the files (drops comments other than descriptions, r
 them before relying on `status` in CI. After that a pull rewrites nothing that did not change.
 
 What `push` reads: strings, plural mappings, lists and raw values; aliases and `<<` merges are expanded. `%{name}` →
-`{name}`, `%%{` → a literal `%{`, other text is ICU-escaped. Comments directly above a key in the default-locale file become
+`{name}`, every `%%` (`%%{x}` included) is kept exactly as written and stays literal text, other text is ICU-escaped. Comments directly above a key in the default-locale file become
 its description. In a target-locale file an unquoted `yes` / `no` or number on a text key is stored as text with a warning,
 and `''` or `~` on a text key is skipped with a warning (Rails falls back to the default). A raw value of another kind than the
 source, or a list where the source is text, is a row error (`kindMismatch`); other row errors are `duplicateKey`,
@@ -426,9 +427,9 @@ source, or a list where the source is text, is a row error (`kindMismatch`); oth
 Not supported in this version (the pull is refused with `YAML_UNSUPPORTED`, the output lists the cells and why): `select` and
 `selectordinal`, exact matches other than `=0` and `offset`, text around a plural, two plurals in one message, nested
 plurals, a plural not on `count`, number formats without a `%{}` equivalent (e.g. currency), an argument name outside
-`[A-Za-z0-9_]`, a literal `%` directly before an argument, a translation whose shape differs from the source, a key that is also
-the prefix of another (`a` and `a.b`), a list with a gap in the default locale (`arrayGap`), and keys whose placeholders are
-printf or i18next rather than ICU.
+`[A-Za-z0-9_]`, a translation whose shape differs from the source, a key that is also
+the prefix of another (`a` and `a.b`), a list with a gap in the default locale (`arrayGap`), a stored raw value that does not parse as its kind (`invalidRaw`), and keys created
+elsewhere whose placeholders are printf or i18next rather than ICU. In a target locale a list with some but not all items translated is also `arrayGap`, on each empty item (all empty: the list is left out).
 
 ## `translify.json` reference
 
@@ -708,7 +709,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `XLIFF_DIALECT_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written in the rule's XLIFF dialect (Angular: text beside a plural, nested plurals, number/date formats; Xcode: `select`, `=0`/`offset`, a translation of a different shape; both: printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Angular (XLIFF)](#angular-xliff) and [Xcode (XLIFF)](#xcode-xliff). |
 | `ANDROID_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Android `strings.xml` (`select`, `=0`/`offset`, text around a plural, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys, a key with `-` or a leading digit, a gapped array). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Android (strings.xml)](#android-stringsxml). |
 | `STRINGS_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as iOS `.strings` / `.stringsdict` (`select`, exact matches other than `=0`, `offset`, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [iOS (.strings / .stringsdict)](#ios-strings--stringsdict). |
-| `YAML_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Rails YAML (`select`, exact matches other than `=0`, `offset`, text around a plural, two or nested plurals, a plural not on `count`, an unknown number format, an argument name outside `[A-Za-z0-9_]`, a `%` before an argument, a translation of a different shape, a key that prefixes another, a gapped list, printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Rails (YAML)](#rails-yaml). |
+| `YAML_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Rails YAML (`select`, exact matches other than `=0`, `offset`, text around a plural, two or nested plurals, a plural not on `count`, an unknown number format, an argument name outside `[A-Za-z0-9_]`, a `%` before an argument, a translation of a different shape, a key that prefixes another, a gapped list, a stored raw value that no longer parses as its kind, `invalidRaw`). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Rails (YAML)](#rails-yaml). |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |
