@@ -21,7 +21,7 @@
             "pattern": "\\{locale\\}",
             "description": "Path with {locale} and optionally {namespace}, using / separators."
           },
-          "format": { "enum": ["json", "xliff", "arb", "android", "strings", "stringsdict"] },
+          "format": { "enum": ["json", "xliff", "arb", "android", "strings", "stringsdict", "yaml"] },
           "namespace": {
             "type": "string",
             "pattern": "^[a-z0-9-]+$",
@@ -32,6 +32,10 @@
           "xliffDialect": {
             "enum": ["angular", "xcode"],
             "description": "Only for format xliff. angular writes @angular/localize placeholders (<ph equiv=\"INTERPOLATION\"/>, VAR_PLURAL) on pull and reads ng extract-i18n output on push. xcode writes XLIFF 1.2 for String Catalogs (positional printf, |==| plural and substitution units) and reads xcodebuild -exportLocalizations output."
+          },
+          "yamlDialect": {
+            "enum": ["rails"],
+            "description": "Only for format yaml, and required with it. rails writes Rails i18n YAML (the locale as the single top-level key, %{name} interpolation, plural category hashes) on pull and reads it on push."
           },
           "xliffOriginal": {
             "type": "string",
@@ -54,12 +58,17 @@
             "then": { "properties": { "pattern": { "not": { "pattern": "\\{namespace\\}" } } } }
           },
           {
-            "if": { "properties": { "format": { "enum": ["xliff", "arb", "android", "strings", "stringsdict"] } }, "required": ["format"] },
+            "if": { "properties": { "format": { "enum": ["xliff", "arb", "android", "strings", "stringsdict", "yaml"] } }, "required": ["format"] },
             "then": { "not": { "required": ["jsonStyle"] } }
           },
           {
-            "if": { "properties": { "format": { "enum": ["json", "arb", "android", "strings", "stringsdict"] } }, "required": ["format"] },
+            "if": { "properties": { "format": { "enum": ["json", "arb", "android", "strings", "stringsdict", "yaml"] } }, "required": ["format"] },
             "then": { "not": { "required": ["xliffDialect"] } }
+          },
+          {
+            "if": { "properties": { "format": { "const": "yaml" } }, "required": ["format"] },
+            "then": { "required": ["yamlDialect"] },
+            "else": { "not": { "required": ["yamlDialect"] } }
           },
           {
             "if": { "properties": { "xliffDialect": { "const": "xcode" } }, "required": ["xliffDialect"] },

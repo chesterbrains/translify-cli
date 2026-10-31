@@ -45,6 +45,7 @@ export const CODE_EXIT: Record<string, ExitCode> = {
   XLIFF_DIALECT_UNSUPPORTED: EXIT.issues,
   ANDROID_UNSUPPORTED: EXIT.issues,
   STRINGS_UNSUPPORTED: EXIT.issues,
+  YAML_UNSUPPORTED: EXIT.issues,
 };
 
 const exitFor = (status: number, code: string | undefined): ExitCode => {
@@ -109,6 +110,8 @@ const describeBody = (status: number, body: ErrorBody): string => {
       return `Publish refused: ${String(body.total)} translation(s) with placeholder errors would go live. Nothing was published.`;
     case 'ANDROID_UNSUPPORTED':
       return `Pull refused: ${String(body.total)} translation(s) cannot be written as Android strings.xml. Nothing was written.`;
+    case 'YAML_UNSUPPORTED':
+      return `Pull refused: ${String(body.total)} translation(s) cannot be written as Rails YAML. Nothing was written.`;
     case 'STRINGS_UNSUPPORTED':
       return `Pull refused: ${String(body.total)} translation(s) cannot be written as iOS .strings/.stringsdict. Nothing was written.`;
     case 'XLIFF_DIALECT_UNSUPPORTED':
