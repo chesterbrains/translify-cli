@@ -186,14 +186,19 @@ describe('loadConfig format yaml', () => {
 
   it('accepts yaml with yamlDialect rails', async () => {
     expect((await loadConfig(await yaml({ yamlDialect: 'rails' }))).files[0]).toMatchObject({ format: 'yaml', yamlDialect: 'rails' });
-    const wildcard = await yaml({ yamlDialect: 'rails', namespace: undefined }, 'config/locales/{namespace}.{locale}.yml');
-    expect((await loadConfig(wildcard)).files[0]?.format).toBe('yaml');
   });
 
   it('requires yamlDialect with yaml and refuses it elsewhere', async () => {
     await expect(loadConfig(await yaml())).rejects.toThrow(/files\.0\.yamlDialect required with format "yaml"/);
     const stray = await withConfig({ apiUrl: 'https://x/api', files: [{ pattern: 'l/{locale}/{namespace}.json', format: 'json', yamlDialect: 'rails' }] });
     await expect(loadConfig(stray)).rejects.toThrow(/files\.0\.yamlDialect only applies to format "yaml"/);
+  });
+
+  it('refuses {namespace} in a yaml pattern', async () => {
+    const wildcard = await yaml({ yamlDialect: 'rails', namespace: undefined }, 'config/locales/{namespace}.{locale}.yml');
+    await expect(loadConfig(wildcard)).rejects.toThrow(/files\.0\.namespace Rails YAML files need a fixed namespace/);
+    const both = await yaml({ yamlDialect: 'rails' }, 'config/locales/{namespace}.{locale}.yml');
+    await expect(loadConfig(both)).rejects.toThrow(/files\.0\.pattern \{namespace\} does not apply to format "yaml"/);
   });
 
   it('refuses jsonStyle and xliffDialect on yaml, and a rule without {namespace} or namespace', async () => {

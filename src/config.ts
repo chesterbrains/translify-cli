@@ -31,12 +31,14 @@ const fileRule = z
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'ARB files need a fixed namespace' });
     } else if (rule.format === 'android' && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'Android files need a fixed namespace' });
+    } else if (rule.format === 'yaml' && rule.namespace === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'Rails YAML files need a fixed namespace' });
     } else if ((rule.format === 'strings' || rule.format === 'stringsdict') && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: '.strings files need a fixed namespace' });
     } else if (!hasPlaceholder && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'needed when the pattern has no {namespace}' });
     }
-    if (hasPlaceholder && (rule.format === 'strings' || rule.format === 'stringsdict')) {
+    if (hasPlaceholder && (rule.format === 'strings' || rule.format === 'stringsdict' || rule.format === 'yaml')) {
       ctx.addIssue({ code: 'custom', path: ['pattern'], message: `{namespace} does not apply to format "${rule.format}"` });
     }
     if (rule.jsonStyle !== undefined && rule.format !== 'json') {

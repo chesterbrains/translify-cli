@@ -470,13 +470,15 @@ describe('runPull format yaml', () => {
   });
 
   it('renders YAML_UNSUPPORTED like the dialect refusal, exit 6', async () => {
-    const body = { code: 'YAML_UNSUPPORTED', total: 1, cells: [{ namespace: 'rails', key: 'k', locale: 'en', reason: 'selectUnsupported' }] };
+    const body = { code: 'YAML_UNSUPPORTED', total: 1, cells: [{ namespace: 'rails', key: 'k', locale: 'en', reason: 'unsupportedIcu' }] };
     const client = { get: vi.fn(async () => { throw new CliError(6, 'x', body); }) };
 
     const failure = (await runPull({}, { cwd: await tmp(), config: rails(), api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
 
     expect(failure.exitCode).toBe(6);
     expect(failure.message).toMatch(/Pull refused: 1 translation\(s\) cannot be written as Rails YAML/);
+    expect(failure.message).toMatch(/a select, or other ICU/);
+    expect(failure.message).not.toMatch(/select\)/);
   });
 });
 

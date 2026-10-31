@@ -50,7 +50,7 @@ const isDialectUnsupported = (details: unknown): details is DialectBody =>
   ['XLIFF_DIALECT_UNSUPPORTED', 'ANDROID_UNSUPPORTED', 'STRINGS_UNSUPPORTED', 'YAML_UNSUPPORTED'].includes((details as { code?: string }).code ?? '');
 
 /** The server's one-line refusal, the cells grouped like `lint`, and the way out. */
-const dialectRefusal = (body: DialectBody, config: Config, dialect: string): CliError => {
+const dialectRefusal = (body: DialectBody, config: Config, dialect: string = 'angular'): CliError => {
   const cells: ReasonCell[] = Array.isArray(body.cells) ? body.cells : [];
   const target: string =
     body.code === 'ANDROID_UNSUPPORTED'
@@ -68,7 +68,9 @@ const dialectRefusal = (body: DialectBody, config: Config, dialect: string): Cli
   lines.push(
     body.code === 'STRINGS_UNSUPPORTED'
       ? 'Split the text so each key is plain text with placeholders or one plural (`=0` allowed; no `select`), or move the key to a JSON rule.'
-      : 'Split the text so each key is plain text with placeholders or one plural/select (Android: one plural), or move the key to a JSON rule.',
+      : body.code === 'YAML_UNSUPPORTED'
+        ? 'Rewrite each key as plain text with placeholders or one plural, or move the key to a JSON rule.'
+        : 'Split the text so each key is plain text with placeholders or one plural/select (Android: one plural), or move the key to a JSON rule.',
   );
 
   return new CliError(EXIT.issues, lines.join('\n'), body);
@@ -144,7 +146,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
 
     const res: PullResponse = await deps.api.get<PullResponse>('/cli/v1/pull', query).catch((error: unknown) => {
       if (error instanceof CliError && isDialectUnsupported(error.details)) {
-        throw dialectRefusal(error.details, deps.config, rule.xliffDialect ?? 'angular');
+        throw dialectRefusal(error.details, deps.config, rule.xliffDialect);
       }
       throw error;
     });

@@ -26,7 +26,7 @@
             "type": "string",
             "pattern": "^[a-z0-9-]+$",
             "maxLength": 64,
-            "description": "Fixed namespace. Required when the pattern has no {namespace}, and always for arb, android, strings and stringsdict."
+            "description": "Fixed namespace. Required when the pattern has no {namespace}, and always for arb, android, strings, stringsdict and yaml."
           },
           "jsonStyle": { "enum": ["nested", "flat"], "description": "Only for format json. Defaults to nested." },
           "xliffDialect": {
@@ -46,7 +46,7 @@
         },
         "allOf": [
           {
-            "if": { "properties": { "format": { "enum": ["arb", "android", "strings", "stringsdict"] } }, "required": ["format"] },
+            "if": { "properties": { "format": { "enum": ["arb", "android", "strings", "stringsdict", "yaml"] } }, "required": ["format"] },
             "then": { "required": ["namespace"] }
           },
           {
@@ -54,7 +54,7 @@
             "then": { "required": ["namespace"] }
           },
           {
-            "if": { "properties": { "format": { "enum": ["strings", "stringsdict"] } }, "required": ["format"] },
+            "if": { "properties": { "format": { "enum": ["strings", "stringsdict", "yaml"] } }, "required": ["format"] },
             "then": { "properties": { "pattern": { "not": { "pattern": "\\{namespace\\}" } } } }
           },
           {

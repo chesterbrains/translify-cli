@@ -198,6 +198,11 @@ const REASON_TEXT: Record<string, string> = {
   syntax: 'the key uses printf or i18next placeholders, not ICU',
   exactMatch: 'an exact match other than =0 (iOS), any exact match (Xcode XLIFF, Android), or offset has no plural category',
   shapeMismatch: 'the translation is not the same shape as the source (plural vs plain text, or a different plural argument)',
+  unsupportedIcu: 'a select, or other ICU the target format cannot express',
+  pluralArgName: 'the plural argument is not named count, which Rails requires',
+  argName: 'an argument name that is not a valid Rails interpolation name',
+  keyConflict: 'the key collides with another key once written as nested YAML',
+  invalidRaw: 'the stored Rails value cannot be written back as YAML',
   unsupportedVariation: 'a device variation or an unknown |==| unit (not supported)',
 };
 
