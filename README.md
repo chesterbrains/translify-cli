@@ -364,15 +364,23 @@ so the same keys serve React, Flutter, iOS, Android and Rails, and Rails transla
 }
 ```
 
-`translify init` looks in `config/locales` of a Rails app (a `Gemfile` or `config/application.rb`) and writes one rule per file
+`translify init` looks in `config/locales` of a Rails app (a `Gemfile` or `config/application.rb` beside it) at the repo root or up to
+two folders below it (`apps/web`, `backend`; patterns are written relative to the repo root), and writes one rule per file
 shape: a locale in the file name (`devise.en.yml` → `devise.{locale}.yml`) or in a directory (`en/devise.yml` →
-`{locale}/devise.yml`); the namespace is the shape's name, kebab-case. A file with several locales (`all.yml`) or a root
+`{locale}/devise.yml`). The namespace is the file's name, kebab-case (`models/user.{locale}.yml` → `user`, or `models-user`
+when `user` is taken; further clashes get `-2`, `-3`). The locale must look like a language code (`en`, `pt-BR`, `zh-Hant`),
+and a shape counts only when two locales share it or its one locale has a real two-letter language (`de`, `pt-BR`; checked with the runtime's `Intl` data, and any two-letter code is accepted on a Node built without it), so `foo.bar.yml` is not read as locale `bar`
+(it is listed in a note). A file with several locales (`all.yml`) or a root
 that does not match its name is skipped with a note, as is a file named after the locale inside a locale folder
 (`en/en.yml`: a pattern holds `{locale}` once, so rename it, e.g. `en/main.yml`), and so is a skipped file that one of the proposed rules would still
-match (push would read it as a locale file): rename or move it.
+match (push would read it as a locale file): rename or move it. A `%YAML` directive and `---` before the root key are ignored.
 
 The root key is the locale as the file names it. The `locales` map above is how `en_US:` on disk becomes the Translify
 locale `en-US` (and back on pull). A file that holds several locales is refused on push.
+
+Push sends the root key exactly as the file's path spells it, so `en_US.yml` and `en-US.yml` can both exist. Pull sends the
+aliases of the `locales` map for locales the project has (only the requested locale with `--locale`; an older server that does not list its locales in `whoami` gets the whole map); when they do not fit one request (1500
+characters) the pull is split into several requests, with no change to what is written.
 
 Workflow:
 
@@ -710,7 +718,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `XLIFF_DIALECT_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written in the rule's XLIFF dialect (Angular: text beside a plural, nested plurals, number/date formats; Xcode: `select`, `=0`/`offset`, a translation of a different shape; both: printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Angular (XLIFF)](#angular-xliff) and [Xcode (XLIFF)](#xcode-xliff). |
 | `ANDROID_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Android `strings.xml` (`select`, `=0`/`offset`, text around a plural, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys, a key with `-` or a leading digit, a gapped array). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Android (strings.xml)](#android-stringsxml). |
 | `STRINGS_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as iOS `.strings` / `.stringsdict` (`select`, exact matches other than `=0`, `offset`, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [iOS (.strings / .stringsdict)](#ios-strings--stringsdict). |
-| `YAML_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Rails YAML (`select`, exact matches other than `=0`, `offset`, text around a plural, two or nested plurals, a plural not on `count`, an unknown number format, an argument name outside `[A-Za-z0-9_]`, a translation of a different shape, a key that prefixes another, a gapped or partly translated list, an unparsable raw value (`invalidRaw`), printf/i18next keys created elsewhere). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Rails (YAML)](#rails-yaml). |
+| `YAML_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Rails YAML (`select`, exact matches other than `=0`, `offset`, text around a plural, two or nested plurals, a plural not on `count`, an unknown number format, an argument name outside `[A-Za-z0-9_]`, a translation of a different shape, a key that prefixes another, a gapped or partly translated list, an unparsable raw value (`invalidRaw`), printf/i18next keys created elsewhere). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule; the closing hint depends on the reasons (a list gap: translate every item or clear them all; `invalidRaw`: fix the value to the source's kind; `keyConflict`: rename one of the keys). See [Rails (YAML)](#rails-yaml). |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |

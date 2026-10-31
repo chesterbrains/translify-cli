@@ -7,7 +7,7 @@ import type { Api } from '../http.js';
 import type { Match } from '../patterns.js';
 import { pathContext } from '../context.js';
 import { CliError, EXIT } from '../errors.js';
-import { findFiles, toFsLocale } from '../patterns.js';
+import { findFiles } from '../patterns.js';
 import { renderPush, summarizePush } from '../render.js';
 
 export interface PushOptions {
@@ -87,7 +87,7 @@ const PUSH: string = '/cli/v1/push';
 const MAX_FILES: number = 500;
 
 /** One form field per file (`file0`, `file1`, …): the server matches by field, never by filename. */
-const buildForm = (uploads: Upload[], config: Config, opts: PushOptions, dryRun: boolean, prune: boolean, pruneDigest?: string): FormData => {
+const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, prune: boolean, pruneDigest?: string): FormData => {
   const form: FormData = new FormData();
   form.set(
     'manifest',
@@ -103,7 +103,7 @@ const buildForm = (uploads: Upload[], config: Config, opts: PushOptions, dryRun:
         ...(match.rule.format === 'yaml' && match.rule.yamlDialect !== undefined
           ? {
               dialect: match.rule.yamlDialect,
-              ...(toFsLocale(match.locale, config) !== match.locale ? { fileLocale: toFsLocale(match.locale, config) } : {}),
+              ...(match.diskLocale !== undefined ? { fileLocale: match.diskLocale } : {}),
             }
           : {}),
       })),
@@ -181,12 +181,12 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
   const destructive: boolean = opts.prune === true || opts.overwriteTargets === true;
   if (opts.dryRun === true || !destructive) {
     // Plain push or an explicit dry run: one request, nothing to confirm.
-    show(await deps.api.post<PushResponse>(PUSH, buildForm(uploads, deps.config, opts, opts.dryRun === true, opts.prune === true)));
+    show(await deps.api.post<PushResponse>(PUSH, buildForm(uploads, opts, opts.dryRun === true, opts.prune === true)));
 
     return EXIT.ok;
   }
 
-  const preview: PushResponse = await deps.api.post<PushResponse>(PUSH, buildForm(uploads, deps.config, opts, true, opts.prune === true));
+  const preview: PushResponse = await deps.api.post<PushResponse>(PUSH, buildForm(uploads, opts, true, opts.prune === true));
   if (opts.prune === true && typeof preview.pruneDigest !== 'string') {
     deps.err(
       'This server cannot confirm a prune (its dry run returned no pruneDigest), so --prune would archive without a bound. ' +
@@ -221,7 +221,7 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
   const prune: boolean = opts.prune === true && preview.orphans.length > 0;
   const res: PushResponse = await deps.api.post<PushResponse>(
     PUSH,
-    buildForm(uploads, deps.config, opts, false, prune, prune ? preview.pruneDigest : undefined),
+    buildForm(uploads, opts, false, prune, prune ? preview.pruneDigest : undefined),
   );
   show(res, preview);
 

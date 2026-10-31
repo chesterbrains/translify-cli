@@ -419,6 +419,28 @@ describe('runPush xliffDialect xcode', () => {
 });
 
 describe('runPush format yaml', () => {
+  it('sends the disk locale exactly as the path spells it, with mixed aliases', async () => {
+    const s = await setup(vi.fn().mockResolvedValue(response()));
+    await mkdir(join(s.cwd, 'config/locales/a'), { recursive: true });
+    await mkdir(join(s.cwd, 'config/locales/b'), { recursive: true });
+    await writeFile(join(s.cwd, 'config/locales/a/en_US.yml'), 'en_US: {}');
+    await writeFile(join(s.cwd, 'config/locales/b/en-US.yml'), 'en-US: {}');
+    await writeFile(join(s.cwd, 'config/locales/b/pt_BR.yml'), 'pt_BR: {}');
+    s.deps.config.files = [
+      { pattern: 'config/locales/a/{locale}.yml', format: 'yaml', yamlDialect: 'rails', namespace: 'a' },
+      { pattern: 'config/locales/b/{locale}.yml', format: 'yaml', yamlDialect: 'rails', namespace: 'b' },
+    ];
+    s.deps.config.locales = { en_US: 'en-US', pt_BR: 'pt-BR' };
+
+    await runPush({}, s.deps);
+
+    const manifest = JSON.parse(String(formOf(s.post, 0).get('manifest'))) as Array<Record<string, string>>;
+    const by = (path: string) => manifest.find((m) => m.path === path)!;
+    expect(by('config/locales/a/en_US.yml').fileLocale).toBe('en_US');
+    expect(by('config/locales/b/en-US.yml').fileLocale).toBeUndefined();
+    expect(by('config/locales/b/pt_BR.yml').fileLocale).toBe('pt_BR');
+  });
+
   it('puts dialect and fileLocale (only when aliased) on the manifest', async () => {
     const s = await setup(vi.fn().mockResolvedValue(response()));
     await mkdir(join(s.cwd, 'config/locales'), { recursive: true });

@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { FileRule } from '../config.js';
 import { detectRails } from './rails.js';
@@ -58,6 +58,7 @@ describe('detectRails', () => {
       'config/application.rb': '',
       'config/locales/pt-BR.yaml': yml('pt-BR'),
       'config/locales/zh-Hant.yaml': yml('zh-Hant'),
+      'config/locales/es-419.yaml': yml('es-419'),
     });
 
     expect((await detectRails(cwd)).rules).toEqual([rule('config/locales/{locale}.yaml', 'app')]);
@@ -175,11 +176,147 @@ describe('detectRails', () => {
       Gemfile: '',
       'config/locales/en.yml': yml('en'),
       'config/locales/it.yaml': yml('it'),
+      'config/locales/de.yaml': yml('de'),
+      'config/locales/fr.yml': yml('fr'),
     });
 
     expect((await detectRails(cwd)).rules).toEqual([
       rule('config/locales/{locale}.yaml', 'app'),
       rule('config/locales/{locale}.yml', 'app-2'),
     ]);
+  });
+
+  it('finds a Rails app below the repo root and writes patterns relative to it', async () => {
+    const cwd: string = await tree({
+      'apps/web/Gemfile': '',
+      'apps/web/config/locales/en.yml': yml('en'),
+      'apps/web/config/locales/it.yml': yml('it'),
+      'backend/config/application.rb': '',
+      'backend/config/locales/devise.en.yml': yml('en'),
+      'backend/config/locales/devise.it.yml': yml('it'),
+      'a/b/c/config/locales/en.yml': yml('en'),
+    });
+    const { rules } = await detectRails(cwd);
+
+    expect(rules.map((r) => r.pattern).sort()).toEqual([
+      'apps/web/config/locales/{locale}.yml',
+      'backend/config/locales/devise.{locale}.yml',
+    ]);
+    expect(new Set(rules.map((r) => r.namespace)).size).toBe(2);
+  });
+
+  it('ignores a config/locales folder that has no Gemfile or application.rb beside it', async () => {
+    const cwd: string = await tree({
+      Gemfile: '',
+      'docs/config/locales/en.yml': yml('en'),
+      'docs/config/locales/it.yml': yml('it'),
+    });
+
+    expect((await detectRails(cwd)).rules).toEqual([]);
+  });
+
+  it('names a deep shape after its file, falling back to the last directory', async () => {
+    const cwd: string = await tree({
+      Gemfile: '',
+      'config/locales/models/user.en.yml': yml('en'),
+      'config/locales/models/user.it.yml': yml('it'),
+      'config/locales/views/user.en.yml': yml('en'),
+      'config/locales/views/user.it.yml': yml('it'),
+    });
+    const { rules } = await detectRails(cwd);
+
+    expect(rules).toEqual([
+      rule('config/locales/models/user.{locale}.yml', 'user'),
+      rule('config/locales/views/user.{locale}.yml', 'views-user'),
+    ]);
+  });
+
+  it('does not take foo.bar.yml for a locale file, but still takes a lone en', async () => {
+    const cwd: string = await tree({
+      Gemfile: '',
+      'config/locales/en.yml': yml('en'),
+      'config/locales/it.yml': yml('it'),
+      'config/locales/foo.bar.yml': yml('bar'),
+      'config/locales/solo.en.yml': yml('en'),
+    });
+    const { rules, notes } = await detectRails(cwd);
+
+    expect(rules.map((r) => r.pattern).sort()).toEqual(['config/locales/solo.{locale}.yml', 'config/locales/{locale}.yml']);
+    expect(notes.join('\n')).toContain('config/locales/foo.bar.yml');
+  });
+
+  it('rejects tokens that are not locale codes', async () => {
+    const cwd: string = await tree({
+      Gemfile: '',
+      'config/locales/x.defaults.yml': yml('defaults'),
+      'config/locales/y.defaults.yml': yml('defaults'),
+      'config/locales/en.yml': yml('en'),
+    });
+
+    expect((await detectRails(cwd)).rules.map((r) => r.pattern)).toEqual(['config/locales/{locale}.yml']);
+  });
+
+  it('skips a %YAML directive when reading the root key', async () => {
+    const cwd: string = await tree({
+      Gemfile: '',
+      'config/locales/en.yml': '%YAML 1.1\n---\nen:\n  a: A\n',
+      'config/locales/it.yml': '%YAML 1.1\n---\nit:\n  a: A\n',
+    });
+
+    expect(await detectRails(cwd)).toEqual({ rules: [rule('config/locales/{locale}.yml', 'app')], notes: [] });
+  });
+
+  it('accepts a lone locale that is a real two-letter language, not a lone 3-letter or unknown token', async () => {
+    const de: string = await tree({ Gemfile: '', 'config/locales/de.yml': yml('de') });
+    expect((await detectRails(de)).rules.map((r) => r.pattern)).toEqual(['config/locales/{locale}.yml']);
+
+    const pt: string = await tree({ Gemfile: '', 'config/locales/pt-BR.yml': yml('pt-BR') });
+    expect((await detectRails(pt)).rules).toHaveLength(1);
+
+    // "bar" is a language (Bavarian) to Intl, but three letters alone stay unconfirmed.
+    const bar: string = await tree({ Gemfile: '', 'config/locales/foo.bar.yml': yml('bar') });
+    expect((await detectRails(bar)).rules).toEqual([]);
+
+    const xx: string = await tree({ Gemfile: '', 'config/locales/foo.zz.yml': yml('zz') });
+    expect((await detectRails(xx)).rules).toEqual([]);
+  });
+
+  it('assigns namespaces the same way whatever order the files were created in', async () => {
+    const files = ['models/user', 'views/user', 'user'];
+    const build = async (order: string[]): Promise<string[]> => {
+      const entries: Record<string, string> = { Gemfile: '' };
+      for (const f of order) {
+        const dir = f.includes('/') ? `${f.split('/')[0]}/` : '';
+        const name = f.split('/').pop() as string;
+        entries[`config/locales/${dir}${name}.en.yml`] = yml('en');
+      }
+
+      return (await detectRails(await tree(entries))).rules.map((r) => `${r.pattern}=${r.namespace}`);
+    };
+
+    expect(await build(files)).toEqual(await build([...files].reverse()));
+    expect(await build(files)).toEqual([
+      'config/locales/models/user.{locale}.yml=models-user',
+      'config/locales/user.{locale}.yml=user',
+      'config/locales/views/user.{locale}.yml=views-user',
+    ]);
+  });
+
+  it('reads variant and lowercase subtags such as en-US-posix', async () => {
+    const cwd: string = await tree({ Gemfile: '', 'config/locales/en-US-posix.yml': yml('en-US-posix') });
+
+    expect((await detectRails(cwd)).rules.map((r) => r.pattern)).toEqual(['config/locales/{locale}.yml']);
+  });
+
+  it('does not skip a lone locale when this Node has no Intl language data', async () => {
+    const spy = vi.spyOn(Intl, 'DisplayNames').mockImplementation(() => {
+      throw new RangeError('no data');
+    });
+    try {
+      const cwd: string = await tree({ Gemfile: '', 'config/locales/de.yml': yml('de') });
+      expect((await detectRails(cwd)).rules).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

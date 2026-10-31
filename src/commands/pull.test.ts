@@ -499,6 +499,105 @@ describe('runPull format yaml', () => {
   });
 });
 
+describe('runPull format yaml refusal hints and fileLocales cap', () => {
+  const rails = (locales: Record<string, string> = {}): Config => ({
+    apiUrl: 'https://x/api',
+    files: [{ pattern: 'config/locales/{locale}.yml', format: 'yaml', yamlDialect: 'rails', namespace: 'rails' }],
+    locales,
+  });
+  const refuse = async (reasons: string[]): Promise<string> => {
+    const body = {
+      code: 'YAML_UNSUPPORTED',
+      total: reasons.length,
+      cells: reasons.map((reason, i) => ({ namespace: 'rails', key: `k${i}`, locale: 'en', reason })),
+    };
+    const client = { get: vi.fn(async () => { throw new CliError(6, 'x', body); }) };
+    const failure = (await runPull({}, { cwd: await tmp(), config: rails(), api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
+
+    return failure.message;
+  };
+
+  it('hints per reason group, not the ICU hint for a list gap', async () => {
+    const gap = await refuse(['arrayGap']);
+    expect(gap).toMatch(/Translate every item of the list, or clear them all\./);
+    expect(gap).not.toMatch(/Rewrite each key as plain text/);
+  });
+
+  it('hints invalidRaw and keyConflict', async () => {
+    expect(await refuse(['invalidRaw'])).toMatch(/Fix the value so it is the same kind as the source \(true\/false, a number, a :symbol list\)\./);
+    expect(await refuse(['keyConflict'])).toMatch(/Rename one of the keys: YAML cannot nest below a key that has a value\./);
+  });
+
+  it('keeps the ICU hint for ICU reasons, and prints each group once', async () => {
+    const icu = await refuse(['unsupportedIcu']);
+    expect(icu).toMatch(/Rewrite each key as plain text with placeholders or one plural, or move the key to a JSON rule\./);
+    expect(icu).not.toMatch(/Translate every item/);
+    const mixed = await refuse(['unsupportedIcu', 'arrayGap', 'arrayGap', 'keyConflict']);
+    expect(mixed.match(/Translate every item/g)).toHaveLength(1);
+    expect(mixed).toMatch(/Rewrite each key/);
+    expect(mixed).toMatch(/Rename one of the keys/);
+  });
+
+  it('splits a pull whose aliases exceed the query budget into per-locale-group requests', async () => {
+    const locales: Record<string, string> = {};
+    for (let i = 0; i < 300; i++) locales[`en_${String(i).padStart(4, '0')}_LONGNAME`] = `en-${String(i).padStart(4, '0')}`;
+    const cwd = await tmp();
+    const client = {
+      get: vi.fn(async (_path: string, query: Record<string, string>) => {
+        const codes = query.locales === undefined ? ['en', 'en-0000', 'en-0299'] : query.locales.split(',');
+        // The server answers with what was asked; a wrong-root file for another aliased locale must be dropped.
+        return { files: codes.filter((c) => c === 'en' || c === 'en-0000' || c === 'en-0299').map((c) => ({ locale: c, namespace: 'rails', format: 'yaml', content: `${c}: {}\n` })), warnings: [] };
+      }),
+    };
+    await runPull({}, { cwd, config: rails(locales), api: client as never, out: quiet });
+
+    const queries = client.get.mock.calls.filter(([path]) => path === '/cli/v1/pull').map(([, q]) => q);
+    expect(queries.length).toBeGreaterThan(2);
+    for (const q of queries) expect((q.fileLocales ?? '').length).toBeLessThanOrEqual(1500);
+    expect(queries.filter((q) => q.fileLocales === undefined && q.locales === undefined)).toHaveLength(1);
+    expect(await readFile(join(cwd, 'config/locales/en.yml'), 'utf8')).toBe('en: {}\n');
+    expect(await readFile(join(cwd, 'config/locales/en_0000_LONGNAME.yml'), 'utf8')).toBe('en-0000: {}\n');
+    expect(await readFile(join(cwd, 'config/locales/en_0299_LONGNAME.yml'), 'utf8')).toBe('en-0299: {}\n');
+  });
+
+  it('sends only the aliases of locales the project has (whoami locales), the whole map for an older server', async () => {
+    const config = rails({ en_US: 'en-US', pt_BR: 'pt-BR', de_DE: 'de-DE' });
+    const modern = { get: vi.fn(async (path: string) => (path === '/cli/v1/whoami' ? { project: { defaultLocale: 'en' }, locales: ['en', 'en-US', 'de-DE'] } : { files: [], warnings: [] })) };
+    await runPull({}, { cwd: await tmp(), config, api: modern as never, out: quiet });
+    expect(modern.get).toHaveBeenCalledWith('/cli/v1/pull', expect.objectContaining({ fileLocales: 'en-US:en_US,de-DE:de_DE' }));
+
+    const older = { get: vi.fn(async (path: string) => (path === '/cli/v1/whoami' ? { project: { defaultLocale: 'en' } } : { files: [], warnings: [] })) };
+    await runPull({}, { cwd: await tmp(), config, api: older as never, out: quiet });
+    expect(older.get).toHaveBeenCalledWith('/cli/v1/pull', expect.objectContaining({ fileLocales: 'en-US:en_US,pt-BR:pt_BR,de-DE:de_DE' }));
+  });
+
+  it('reports one merged response per rule for a split pull: accepted files only, warnings once', async () => {
+    const locales: Record<string, string> = {};
+    for (let i = 0; i < 300; i++) locales[`en_${String(i).padStart(4, '0')}_LONGNAME`] = `en-${String(i).padStart(4, '0')}`;
+    const out: string[] = [];
+    const client = {
+      get: vi.fn(async (_path: string, query: Record<string, string>) => ({
+        files: ['en', 'en-0000'].map((c) => ({ locale: c, namespace: 'rails', format: 'yaml', content: `${c}: {}\n` })).filter((f) => query.locales === undefined || query.locales.split(',').includes(f.locale)),
+        warnings: ['same warning'],
+      })),
+    };
+    await runPull({ json: true }, { cwd: await tmp(), config: rails(locales), api: client as never, out: (line) => out.push(line) });
+
+    const { responses } = JSON.parse(out.join('')) as { responses: Array<{ files: Array<{ locale: string }>; warnings: string[] }> };
+    expect(responses).toHaveLength(1);
+    expect(responses[0]!.files.map((f) => f.locale).sort()).toEqual(['en', 'en-0000']);
+    expect(responses[0]!.warnings).toEqual(['same warning']);
+  });
+
+  it('keeps one request when the pairs fit, and only the requested locale with --locale', async () => {
+    const client = { get: vi.fn(async () => ({ files: [], warnings: [] })) };
+    await runPull({ locale: 'en_US' }, { cwd: await tmp(), config: rails({ en_US: 'en-US', pt_BR: 'pt-BR' }), api: client as never, out: quiet });
+
+    expect(client.get.mock.calls.filter(([path]) => path === '/cli/v1/pull')).toHaveLength(1);
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', expect.objectContaining({ fileLocales: 'en-US:en_US', locales: 'en-US' }));
+  });
+});
+
 describe('runPull format strings', () => {
   it('renders STRINGS_UNSUPPORTED like the dialect refusal, exit 6', async () => {
     const config: Config = {
