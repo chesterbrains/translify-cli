@@ -41,7 +41,7 @@ const ANDROID_LOCALE: string = '(?<locale>[a-z]{2}(?:-r[A-Z]{2})?|b\\+[A-Za-z0-9
  * `locales/{locale}/{namespace}.json` → a glob and a regex with named groups. An Android rule's `-{locale}`
  * is optional (the default locale lives in plain `values/`) and its locale is a resource qualifier.
  */
-const compile = (pattern: string, android: boolean): { glob: string; regex: RegExp } => {
+export const compile = (pattern: string, android: boolean): { glob: string; regex: RegExp } => {
   const parts: string[] = posix(pattern).split(/(\{locale\}|\{namespace\})/);
   // `values-{locale}`: the dash belongs to the optional group, so it leaves the literal text.
   const optional = (index: number): boolean => android && parts[index + 1] === '{locale}' && parts[index]!.endsWith('-');

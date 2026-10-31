@@ -3,6 +3,7 @@ import { join, posix } from 'node:path';
 import fg from 'fast-glob';
 
 import type { FileRule } from '../config.js';
+import { compile } from '../patterns.js';
 import { kebab, NONE, type Detection } from './shared.js';
 
 const LOCALES_DIR: string = 'config/locales';
@@ -22,15 +23,26 @@ const rootKeys = (text: string): string[] => {
   return keys;
 };
 
-/** Replaces the dot-separated segment of the file name equal to `locale`; undefined when none is. */
+/**
+ * Puts `{locale}` where `locale` sits in the path under config/locales. A directory segment wins over a file-name
+ * segment (`en/en.yml` → `{locale}/en.yml`), the last of each wins; undefined when the locale appears nowhere.
+ */
 const shapeOf = (path: string, locale: string): string | undefined => {
-  const ext: string = posix.extname(path);
-  const segments: string[] = posix.basename(path, ext).split('.');
+  const relative: string[] = posix.relative(LOCALES_DIR, path).split('/');
+  const file: string = relative.pop() as string;
+  const dirAt: number = relative.lastIndexOf(locale);
+  if (dirAt !== -1) {
+    relative[dirAt] = '{locale}';
+
+    return posix.join(LOCALES_DIR, ...relative, file);
+  }
+  const ext: string = posix.extname(file);
+  const segments: string[] = posix.basename(file, ext).split('.');
   const at: number = segments.lastIndexOf(locale);
   if (at === -1) return undefined;
   segments[at] = '{locale}';
 
-  return posix.join(posix.dirname(path), `${segments.join('.')}${ext}`);
+  return posix.join(LOCALES_DIR, ...relative, `${segments.join('.')}${ext}`);
 };
 
 const namespaceOf = (shape: string): string => {
@@ -49,13 +61,17 @@ export async function detectRails(cwd: string): Promise<Detection> {
   const [hasGemfile, hasApplication, paths]: [string[], string[], string[]] = await Promise.all([
     fg('Gemfile', { cwd, onlyFiles: true }),
     fg('config/application.rb', { cwd, onlyFiles: true }),
-    fg(`${LOCALES_DIR}/**/*.{yml,yaml}`, { cwd, onlyFiles: true, dot: false, ignore: IGNORE }),
+    fg(`${LOCALES_DIR}/**/*.{yml,yaml}`, {
+      cwd,
+      onlyFiles: true,
+      ignore: IGNORE,
+    }),
   ]);
   if ((hasGemfile.length === 0 && hasApplication.length === 0) || paths.length === 0) return NONE;
 
   const shapes: Set<string> = new Set();
   const skipped: string[] = [];
-  for (const path of paths.sort()) {
+  for (const path of [...paths].sort()) {
     const keys: string[] = rootKeys(await readFile(join(cwd, path), 'utf8').catch(() => ''));
     const locale: string | undefined = keys.length === 1 ? keys[0] : undefined;
     const shape: string | undefined = locale !== undefined && LOCALE_TOKEN.test(locale) ? shapeOf(path, locale) : undefined;
@@ -74,7 +90,19 @@ export async function detectRails(cwd: string): Promise<Detection> {
   }
   const notes: string[] = [];
   if (skipped.length > 0) {
-    notes.push(`Skipped Rails locale files that do not hold exactly one root key equal to the locale in their name: ${skipped.join(', ')}.`);
+    notes.push(
+      `Skipped Rails locale files that do not hold exactly one root key equal to the locale in their name: ${skipped.join(', ')}.`,
+    );
+  }
+  // `{locale}` matches any name, so a skipped file can still be read as a locale file by a proposed rule.
+  for (const rule of rules) {
+    const { regex } = compile(rule.pattern, false);
+    const caught: string[] = skipped.filter((path) => regex.test(path));
+    if (caught.length > 0) {
+      notes.push(
+        `${rule.pattern} also matches ${caught.join(', ')}, and push will read them as locale files: rename or move them, or exclude them.`,
+      );
+    }
   }
 
   return { rules, notes };
