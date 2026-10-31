@@ -13,6 +13,8 @@ export interface Match {
   locale: string;
   namespace: string;
   rule: FileRule;
+  /** The locale exactly as the path spells it; set only when it differs from `locale` (an alias). */
+  diskLocale?: string;
 }
 
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -88,13 +90,11 @@ export async function findFiles(config: Config, cwd: string, context: PathContex
       if (groups === undefined || (groups.locale === undefined && !android)) continue;
       const namespace: string | undefined = groups.namespace ?? rule.namespace;
       if (namespace === undefined) continue;
-      const locale: string =
-        groups.locale === undefined
-          ? (context.defaultLocale as string)
-          : toTranslifyLocale(android ? fromAndroidQualifier(groups.locale) : groups.locale, config);
+      const raw: string | undefined = groups.locale === undefined ? undefined : android ? fromAndroidQualifier(groups.locale) : groups.locale;
+      const locale: string = raw === undefined ? (context.defaultLocale as string) : toTranslifyLocale(raw, config);
 
       if (android) qualifiers.set(path, groups.locale ?? '');
-      matches.push({ path, locale, namespace, rule });
+      matches.push({ path, locale, namespace, rule, ...(raw !== undefined && raw !== locale ? { diskLocale: raw } : {}) });
     }
   }
 
