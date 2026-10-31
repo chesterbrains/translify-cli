@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { FileRule } from '../config.js';
 import { detectRails } from './rails.js';
@@ -300,5 +300,23 @@ describe('detectRails', () => {
       'config/locales/user.{locale}.yml=user',
       'config/locales/views/user.{locale}.yml=views-user',
     ]);
+  });
+
+  it('reads variant and lowercase subtags such as en-US-posix', async () => {
+    const cwd: string = await tree({ Gemfile: '', 'config/locales/en-US-posix.yml': yml('en-US-posix') });
+
+    expect((await detectRails(cwd)).rules.map((r) => r.pattern)).toEqual(['config/locales/{locale}.yml']);
+  });
+
+  it('does not skip a lone locale when this Node has no Intl language data', async () => {
+    const spy = vi.spyOn(Intl, 'DisplayNames').mockImplementation(() => {
+      throw new RangeError('no data');
+    });
+    try {
+      const cwd: string = await tree({ Gemfile: '', 'config/locales/de.yml': yml('de') });
+      expect((await detectRails(cwd)).rules).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

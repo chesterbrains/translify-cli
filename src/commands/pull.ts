@@ -35,8 +35,25 @@ export interface PullDeps {
 const readOrUndefined = async (path: string): Promise<string | undefined> =>
   readFile(path, 'utf8').catch(() => undefined);
 
-/** The server accepts 8192 characters of `fileLocales`; stay below it. */
-const FILE_LOCALES_MAX: number = 8000;
+/** `fileLocales` rides in the query string; proxies cap the request line (nginx: 8 KB), so one request carries at most this many characters of it. */
+const FILE_LOCALES_MAX: number = 1500;
+
+/** Greedy groups of `code:disk` pairs, each joined within FILE_LOCALES_MAX. */
+const chunkPairs = (pairs: Array<[string, string]>): Array<Array<[string, string]>> => {
+  const chunks: Array<Array<[string, string]>> = [];
+  let size = 0;
+  for (const pair of pairs) {
+    const length: number = pair[0].length + pair[1].length + 2;
+    if (chunks.length === 0 || size + length > FILE_LOCALES_MAX) {
+      chunks.push([]);
+      size = 0;
+    }
+    chunks.at(-1)!.push(pair);
+    size += length;
+  }
+
+  return chunks;
+};
 
 const NESTED_CONFLICT: RegExp = /nested JSON cannot hold both/;
 
@@ -145,74 +162,86 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     const wildcard: boolean = rule.namespace === undefined;
     if (wildcard && opts.namespace !== undefined && claimed.has(opts.namespace)) continue;
 
-    const query: Record<string, string> = { format: rule.format };
-    if (rule.format === 'json' && rule.jsonStyle !== undefined) query.jsonStyle = rule.jsonStyle;
-    if (rule.format === 'xliff' && rule.xliffDialect !== undefined) query.dialect = rule.xliffDialect;
-    if (rule.format === 'xliff' && rule.xliffOriginal !== undefined) query.original = rule.xliffOriginal;
+    const base: Record<string, string> = { format: rule.format };
+    if (rule.format === 'json' && rule.jsonStyle !== undefined) base.jsonStyle = rule.jsonStyle;
+    if (rule.format === 'xliff' && rule.xliffDialect !== undefined) base.dialect = rule.xliffDialect;
+    if (rule.format === 'xliff' && rule.xliffOriginal !== undefined) base.original = rule.xliffOriginal;
+    /** One request, or several when the Rails alias pairs do not fit one query string; `accept` picks the locales each one is trusted for. */
+    let variants: Array<{ extra: Record<string, string>; accept: (locale: string) => boolean }> = [{ extra: {}, accept: () => true }];
     if (rule.format === 'yaml' && rule.yamlDialect !== undefined) {
-      query.dialect = rule.yamlDialect;
+      base.dialect = rule.yamlDialect;
       // The file's locale key follows the disk name (en_US), the server only knows Translify codes.
       const requested: string[] = opts.locale === undefined ? Object.values(deps.config.locales) : [toTranslifyLocale(opts.locale, deps.config)];
-      const aliased: string[] = [...new Set(requested)]
+      const pairs: Array<[string, string]> = [...new Set(requested)]
         .filter((code) => toFsLocale(code, deps.config) !== code)
-        .map((code) => `${code}:${toFsLocale(code, deps.config)}`);
-      const joined: string = aliased.join(',');
-      if (joined.length > FILE_LOCALES_MAX) {
-        throw new CliError(
-          EXIT.failed,
-          `Too many aliased locales for one Rails pull (${joined.length} > ${FILE_LOCALES_MAX} characters of "locales" pairs). Pull one locale at a time with --locale.`,
-        );
+        .map((code): [string, string] => [code, toFsLocale(code, deps.config)]);
+      const chunks: Array<Array<[string, string]>> = chunkPairs(pairs);
+      const format = (chunk: Array<[string, string]>): string => chunk.map(([code, disk]) => `${code}:${disk}`).join(',');
+      if (chunks.length === 1) variants = [{ extra: { fileLocales: format(chunks[0]!) }, accept: () => true }];
+      else if (chunks.length > 1) {
+        // Each chunk is asked for its own locales only; one last request serves every locale without an alias.
+        const aliased: Set<string> = new Set(pairs.map(([code]) => code));
+        variants = [
+          ...chunks.map((chunk) => {
+            const codes: Set<string> = new Set(chunk.map(([code]) => code));
+
+            return { extra: { fileLocales: format(chunk), locales: [...codes].join(',') }, accept: (locale: string) => codes.has(locale) };
+          }),
+          { extra: {}, accept: (locale: string) => !aliased.has(locale) },
+        ];
       }
-      if (joined !== '') query.fileLocales = joined;
     }
-    if (opts.from !== undefined) query.from = opts.from;
-    if (opts.onlyApproved) query.approvedOnly = 'true';
-    if (opts.locale !== undefined) query.locales = toTranslifyLocale(opts.locale, deps.config);
+    if (opts.from !== undefined) base.from = opts.from;
+    if (opts.onlyApproved) base.approvedOnly = 'true';
+    if (opts.locale !== undefined) base.locales = toTranslifyLocale(opts.locale, deps.config);
     const namespace: string | undefined = rule.namespace ?? opts.namespace;
-    if (namespace !== undefined) query.namespaces = namespace;
+    if (namespace !== undefined) base.namespaces = namespace;
 
-    const res: PullResponse = await deps.api.get<PullResponse>('/cli/v1/pull', query).catch((error: unknown) => {
-      if (error instanceof CliError && isDialectUnsupported(error.details)) {
-        throw dialectRefusal(error.details, deps.config, rule.xliffDialect);
-      }
-      throw error;
-    });
-    responses.push(res);
-    for (const warning of res.warnings) {
-      lines.push(`warning: ${warning}`);
-      if (!flatHinted && NESTED_CONFLICT.test(warning)) {
-        flatHinted = true;
-        lines.push('hint: set "jsonStyle": "flat" on this files rule in translify.json to keep both keys.');
-      }
-    }
-
-    for (const file of res.files) {
-      if (wildcard && claimed.has(file.namespace)) continue;
-
-      const path: string = pathFor(rule, file.locale, file.namespace, deps.config, context);
-      const absolute: string = resolve(deps.cwd, path);
-      const rel: string = relative(resolve(deps.cwd), absolute);
-      if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
-        throw new CliError(EXIT.failed, `Refusing to write ${path}: it resolves outside the project directory.`);
+    for (const variant of variants) {
+      const res: PullResponse = await deps.api.get<PullResponse>('/cli/v1/pull', { ...base, ...variant.extra }).catch((error: unknown) => {
+        if (error instanceof CliError && isDialectUnsupported(error.details)) {
+          throw dialectRefusal(error.details, deps.config, rule.xliffDialect);
+        }
+        throw error;
+      });
+      responses.push(res);
+      for (const warning of res.warnings) {
+        lines.push(`warning: ${warning}`);
+        if (!flatHinted && NESTED_CONFLICT.test(warning)) {
+          flatHinted = true;
+          lines.push('hint: set "jsonStyle": "flat" on this files rule in translify.json to keep both keys.');
+        }
       }
 
-      // Two server locales can back-map to one disk locale; writing both would clobber one every run.
-      const cell = `${file.locale}/${file.namespace}`;
-      const other: string | undefined = seen.get(absolute);
-      if (other !== undefined) {
-        throw new CliError(
-          EXIT.failed,
-          `${path} would be written for both ${other} and ${cell}. Fix the "locales" map so each Translify locale has its own file.`,
-        );
+      for (const file of res.files) {
+        if (!variant.accept(file.locale)) continue;
+        if (wildcard && claimed.has(file.namespace)) continue;
+
+        const path: string = pathFor(rule, file.locale, file.namespace, deps.config, context);
+        const absolute: string = resolve(deps.cwd, path);
+        const rel: string = relative(resolve(deps.cwd), absolute);
+        if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+          throw new CliError(EXIT.failed, `Refusing to write ${path}: it resolves outside the project directory.`);
+        }
+
+        // Two server locales can back-map to one disk locale; writing both would clobber one every run.
+        const cell = `${file.locale}/${file.namespace}`;
+        const other: string | undefined = seen.get(absolute);
+        if (other !== undefined) {
+          throw new CliError(
+            EXIT.failed,
+            `${path} would be written for both ${other} and ${cell}. Fix the "locales" map so each Translify locale has its own file.`,
+          );
+        }
+        seen.set(absolute, cell);
+
+        const content: string = rule.format === 'arb' ? withDiskLocale(file.content, file.locale, deps.config) : file.content;
+        const existing: string | undefined = await readOrUndefined(absolute);
+        if (existing !== undefined && (existing === content || normalizeEol(existing) === content)) continue;
+
+        (existing === undefined ? created : changed).push(path);
+        plan.push({ path, absolute, content });
       }
-      seen.set(absolute, cell);
-
-      const content: string = rule.format === 'arb' ? withDiskLocale(file.content, file.locale, deps.config) : file.content;
-      const existing: string | undefined = await readOrUndefined(absolute);
-      if (existing !== undefined && (existing === content || normalizeEol(existing) === content)) continue;
-
-      (existing === undefined ? created : changed).push(path);
-      plan.push({ path, absolute, content });
     }
   }
 

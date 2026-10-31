@@ -538,15 +538,34 @@ describe('runPull format yaml refusal hints and fileLocales cap', () => {
     expect(mixed).toMatch(/Rename one of the keys/);
   });
 
-  it('fails clearly when the aliased locales would not fit the fileLocales parameter', async () => {
+  it('splits a pull whose aliases exceed the query budget into per-locale-group requests', async () => {
     const locales: Record<string, string> = {};
-    for (let i = 0; i < 400; i++) locales[`en_${String(i).padStart(4, '0')}_LONGNAME`] = `en-${String(i).padStart(4, '0')}`;
-    const client = { get: vi.fn(async () => ({ files: [], warnings: [] })) };
-    const failure = (await runPull({}, { cwd: await tmp(), config: rails(locales), api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
+    for (let i = 0; i < 300; i++) locales[`en_${String(i).padStart(4, '0')}_LONGNAME`] = `en-${String(i).padStart(4, '0')}`;
+    const cwd = await tmp();
+    const client = {
+      get: vi.fn(async (_path: string, query: Record<string, string>) => {
+        const codes = query.locales === undefined ? ['en', 'en-0000', 'en-0299'] : query.locales.split(',');
+        // The server answers with what was asked; a wrong-root file for another aliased locale must be dropped.
+        return { files: codes.filter((c) => c === 'en' || c === 'en-0000' || c === 'en-0299').map((c) => ({ locale: c, namespace: 'rails', format: 'yaml', content: `${c}: {}\n` })), warnings: [] };
+      }),
+    };
+    await runPull({}, { cwd, config: rails(locales), api: client as never, out: quiet });
 
-    expect(failure).toBeInstanceOf(CliError);
-    expect(failure.message).toMatch(/too many aliased locales/i);
-    expect(client.get).not.toHaveBeenCalled();
+    const queries = client.get.mock.calls.map(([, q]) => q);
+    expect(queries.length).toBeGreaterThan(2);
+    for (const q of queries) expect((q.fileLocales ?? '').length).toBeLessThanOrEqual(1500);
+    expect(queries.filter((q) => q.fileLocales === undefined && q.locales === undefined)).toHaveLength(1);
+    expect(await readFile(join(cwd, 'config/locales/en.yml'), 'utf8')).toBe('en: {}\n');
+    expect(await readFile(join(cwd, 'config/locales/en_0000_LONGNAME.yml'), 'utf8')).toBe('en-0000: {}\n');
+    expect(await readFile(join(cwd, 'config/locales/en_0299_LONGNAME.yml'), 'utf8')).toBe('en-0299: {}\n');
+  });
+
+  it('keeps one request when the pairs fit, and only the requested locale with --locale', async () => {
+    const client = { get: vi.fn(async () => ({ files: [], warnings: [] })) };
+    await runPull({ locale: 'en_US' }, { cwd: await tmp(), config: rails({ en_US: 'en-US', pt_BR: 'pt-BR' }), api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledTimes(1);
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', expect.objectContaining({ fileLocales: 'en-US:en_US', locales: 'en-US' }));
   });
 });
 

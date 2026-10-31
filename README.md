@@ -369,14 +369,18 @@ two folders below it (`apps/web`, `backend`; patterns are written relative to th
 shape: a locale in the file name (`devise.en.yml` → `devise.{locale}.yml`) or in a directory (`en/devise.yml` →
 `{locale}/devise.yml`). The namespace is the file's name, kebab-case (`models/user.{locale}.yml` → `user`, or `models-user`
 when `user` is taken; further clashes get `-2`, `-3`). The locale must look like a language code (`en`, `pt-BR`, `zh-Hant`),
-and a shape counts only when two locales share it or its one locale has a real two-letter language (`de`, `pt-BR`), so `foo.bar.yml` is not read as locale `bar`
+and a shape counts only when two locales share it or its one locale has a real two-letter language (`de`, `pt-BR`; checked with the runtime's `Intl` data, and any two-letter code is accepted on a Node built without it), so `foo.bar.yml` is not read as locale `bar`
 (it is listed in a note). A file with several locales (`all.yml`) or a root
 that does not match its name is skipped with a note, as is a file named after the locale inside a locale folder
 (`en/en.yml`: a pattern holds `{locale}` once, so rename it, e.g. `en/main.yml`), and so is a skipped file that one of the proposed rules would still
 match (push would read it as a locale file): rename or move it. A `%YAML` directive and `---` before the root key are ignored.
 
 The root key is the locale as the file names it. The `locales` map above is how `en_US:` on disk becomes the Translify
-locale `en-US` (and back on pull). A file that holds several locales is refused on push. Push sends the root key exactly as the file's path spells it, so `en_US.yml` and `en-US.yml` can both exist. Pull sends the aliases of the `locales` map; with more than 8000 characters of them it stops and asks for `--locale`.
+locale `en-US` (and back on pull). A file that holds several locales is refused on push.
+
+Push sends the root key exactly as the file's path spells it, so `en_US.yml` and `en-US.yml` can both exist. Pull sends the
+aliases of the `locales` map (only the requested locale with `--locale`); when they do not fit one request (1500
+characters) the pull is split into several requests, with no change to what is written.
 
 Workflow:
 

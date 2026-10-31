@@ -8,16 +8,22 @@ import { kebab, type Detection } from './shared.js';
 
 const LOCALES_DIR: string = 'config/locales';
 const IGNORE: string[] = ['**/vendor/**', '**/node_modules/**', '**/tmp/**'];
-/** ISO 639 two or three letters, then optional script (4 letters), region (2 letters or 3 digits). */
-const LOCALE_TOKEN: RegExp = /^[a-z]{2,3}(?:[-_](?:[A-Za-z]{4}|[A-Za-z]{2}|\d{3}))*$/;
-/** Whether Intl knows the two-letter language subtag of `code` (`de`, `pt-BR`); three letters are too permissive (`bar` is Bavarian). */
+/** ISO 639 two or three letters, then any BCP 47 subtags (script, region, variant); `isConfirmed` rejects false positives. */
+const LOCALE_TOKEN: RegExp = /^[a-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*$/;
+/**
+ * Whether Intl knows the two-letter language subtag of `code` (`de`, `pt-BR`); three letters are too permissive (`bar` is
+ * Bavarian). A Node without Intl language data (small-icu) cannot tell, so any two-letter language is believed there.
+ */
 const isKnownLanguage = (code: string): boolean => {
   const language: string = code.split(/[-_]/)[0] as string;
   if (language.length !== 2) return false;
   try {
-    return new Intl.DisplayNames(['en'], { type: 'language', fallback: 'none' }).of(language) !== undefined;
+    const names: Intl.DisplayNames = new Intl.DisplayNames(['en'], { type: 'language', fallback: 'none' });
+
+    // `en` always has a name when the data is there; none means the data is missing, not that `language` is unknown.
+    return names.of('en') === undefined || names.of(language) !== undefined;
   } catch {
-    return false;
+    return true;
   }
 };
 
