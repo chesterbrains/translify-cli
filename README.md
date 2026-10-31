@@ -379,7 +379,7 @@ The root key is the locale as the file names it. The `locales` map above is how 
 locale `en-US` (and back on pull). A file that holds several locales is refused on push.
 
 Push sends the root key exactly as the file's path spells it, so `en_US.yml` and `en-US.yml` can both exist. Pull sends the
-aliases of the `locales` map (only the requested locale with `--locale`); when they do not fit one request (1500
+aliases of the `locales` map for locales the project has (only the requested locale with `--locale`; an older server that does not list its locales in `whoami` gets the whole map); when they do not fit one request (1500
 characters) the pull is split into several requests, with no change to what is written.
 
 Workflow:

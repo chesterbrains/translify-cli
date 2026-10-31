@@ -6,6 +6,8 @@ import type { Config, FileRule } from './config.js';
 /** What the server knows and the files do not: the project's default locale (Android's `values/`). */
 export interface PathContext {
   defaultLocale?: string;
+  /** The project's enabled locale codes, when whoami said so. */
+  locales?: string[];
 }
 
 export interface Match {

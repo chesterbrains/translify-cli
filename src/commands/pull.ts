@@ -172,7 +172,10 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
       base.dialect = rule.yamlDialect;
       // The file's locale key follows the disk name (en_US), the server only knows Translify codes.
       const requested: string[] = opts.locale === undefined ? Object.values(deps.config.locales) : [toTranslifyLocale(opts.locale, deps.config)];
+      // Only locales the project has can come back; an older server (no `locales` in whoami) keeps the whole map.
+      const projectLocales: Set<string> | undefined = context.locales === undefined ? undefined : new Set(context.locales);
       const pairs: Array<[string, string]> = [...new Set(requested)]
+        .filter((code) => projectLocales === undefined || projectLocales.has(code))
         .filter((code) => toFsLocale(code, deps.config) !== code)
         .map((code): [string, string] => [code, toFsLocale(code, deps.config)]);
       const chunks: Array<Array<[string, string]>> = chunkPairs(pairs);

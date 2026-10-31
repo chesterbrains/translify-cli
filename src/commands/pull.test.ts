@@ -551,7 +551,7 @@ describe('runPull format yaml refusal hints and fileLocales cap', () => {
     };
     await runPull({}, { cwd, config: rails(locales), api: client as never, out: quiet });
 
-    const queries = client.get.mock.calls.map(([, q]) => q);
+    const queries = client.get.mock.calls.filter(([path]) => path === '/cli/v1/pull').map(([, q]) => q);
     expect(queries.length).toBeGreaterThan(2);
     for (const q of queries) expect((q.fileLocales ?? '').length).toBeLessThanOrEqual(1500);
     expect(queries.filter((q) => q.fileLocales === undefined && q.locales === undefined)).toHaveLength(1);
@@ -560,11 +560,22 @@ describe('runPull format yaml refusal hints and fileLocales cap', () => {
     expect(await readFile(join(cwd, 'config/locales/en_0299_LONGNAME.yml'), 'utf8')).toBe('en-0299: {}\n');
   });
 
+  it('sends only the aliases of locales the project has (whoami locales), the whole map for an older server', async () => {
+    const config = rails({ en_US: 'en-US', pt_BR: 'pt-BR', de_DE: 'de-DE' });
+    const modern = { get: vi.fn(async (path: string) => (path === '/cli/v1/whoami' ? { project: { defaultLocale: 'en' }, locales: ['en', 'en-US', 'de-DE'] } : { files: [], warnings: [] })) };
+    await runPull({}, { cwd: await tmp(), config, api: modern as never, out: quiet });
+    expect(modern.get).toHaveBeenCalledWith('/cli/v1/pull', expect.objectContaining({ fileLocales: 'en-US:en_US,de-DE:de_DE' }));
+
+    const older = { get: vi.fn(async (path: string) => (path === '/cli/v1/whoami' ? { project: { defaultLocale: 'en' } } : { files: [], warnings: [] })) };
+    await runPull({}, { cwd: await tmp(), config, api: older as never, out: quiet });
+    expect(older.get).toHaveBeenCalledWith('/cli/v1/pull', expect.objectContaining({ fileLocales: 'en-US:en_US,pt-BR:pt_BR,de-DE:de_DE' }));
+  });
+
   it('keeps one request when the pairs fit, and only the requested locale with --locale', async () => {
     const client = { get: vi.fn(async () => ({ files: [], warnings: [] })) };
     await runPull({ locale: 'en_US' }, { cwd: await tmp(), config: rails({ en_US: 'en-US', pt_BR: 'pt-BR' }), api: client as never, out: quiet });
 
-    expect(client.get).toHaveBeenCalledTimes(1);
+    expect(client.get.mock.calls.filter(([path]) => path === '/cli/v1/pull')).toHaveLength(1);
     expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', expect.objectContaining({ fileLocales: 'en-US:en_US', locales: 'en-US' }));
   });
 });
