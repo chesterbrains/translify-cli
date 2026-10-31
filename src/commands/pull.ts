@@ -35,6 +35,9 @@ export interface PullDeps {
 const readOrUndefined = async (path: string): Promise<string | undefined> =>
   readFile(path, 'utf8').catch(() => undefined);
 
+/** The server accepts 8192 characters of `fileLocales`; stay below it. */
+const FILE_LOCALES_MAX: number = 8000;
+
 const NESTED_CONFLICT: RegExp = /nested JSON cannot hold both/;
 
 /** The 422 `XLIFF_DIALECT_UNSUPPORTED` / `ANDROID_UNSUPPORTED` / `YAML_UNSUPPORTED` body: up to 100 cells, `total` counts them all. */
@@ -48,6 +51,29 @@ const isDialectUnsupported = (details: unknown): details is DialectBody =>
   typeof details === 'object' &&
   details !== null &&
   ['XLIFF_DIALECT_UNSUPPORTED', 'ANDROID_UNSUPPORTED', 'STRINGS_UNSUPPORTED', 'YAML_UNSUPPORTED'].includes((details as { code?: string }).code ?? '');
+
+const dialectHint = (code: DialectBody['code']): string =>
+  code === 'STRINGS_UNSUPPORTED'
+    ? 'Split the text so each key is plain text with placeholders or one plural (`=0` allowed; no `select`), or move the key to a JSON rule.'
+    : 'Split the text so each key is plain text with placeholders or one plural/select (Android: one plural), or move the key to a JSON rule.';
+
+const YAML_HINTS: Record<string, string> = {
+  arrayGap: 'Translate every item of the list, or clear them all.',
+  invalidRaw: 'Fix the value so it is the same kind as the source (true/false, a number, a :symbol list).',
+  keyConflict: 'Rename one of the keys: YAML cannot nest below a key that has a value.',
+};
+const YAML_ICU_HINT: string = 'Rewrite each key as plain text with placeholders or one plural, or move the key to a JSON rule.';
+
+/** One hint per reason group present, each once; the ICU hint covers every other reason. */
+const yamlHints = (cells: ReasonCell[]): string[] => {
+  const hints: string[] = [];
+  for (const { reason } of cells) {
+    const hint: string = YAML_HINTS[reason] ?? YAML_ICU_HINT;
+    if (!hints.includes(hint)) hints.push(hint);
+  }
+
+  return hints.length === 0 ? [YAML_ICU_HINT] : hints;
+};
 
 /** The server's one-line refusal, the cells grouped like `lint`, and the way out. */
 const dialectRefusal = (body: DialectBody, config: Config, dialect: string = 'angular'): CliError => {
@@ -65,13 +91,7 @@ const dialectRefusal = (body: DialectBody, config: Config, dialect: string = 'an
     ...renderReasonCells(cells, config),
   ];
   if (body.total > cells.length) lines.push(`Showing first ${cells.length} of ${body.total}.`);
-  lines.push(
-    body.code === 'STRINGS_UNSUPPORTED'
-      ? 'Split the text so each key is plain text with placeholders or one plural (`=0` allowed; no `select`), or move the key to a JSON rule.'
-      : body.code === 'YAML_UNSUPPORTED'
-        ? 'Rewrite each key as plain text with placeholders or one plural, or move the key to a JSON rule.'
-        : 'Split the text so each key is plain text with placeholders or one plural/select (Android: one plural), or move the key to a JSON rule.',
-  );
+  lines.push(...(body.code === 'YAML_UNSUPPORTED' ? yamlHints(cells) : [dialectHint(body.code)]));
 
   return new CliError(EXIT.issues, lines.join('\n'), body);
 };
@@ -136,7 +156,14 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
       const aliased: string[] = [...new Set(requested)]
         .filter((code) => toFsLocale(code, deps.config) !== code)
         .map((code) => `${code}:${toFsLocale(code, deps.config)}`);
-      if (aliased.length > 0) query.fileLocales = aliased.join(',');
+      const joined: string = aliased.join(',');
+      if (joined.length > FILE_LOCALES_MAX) {
+        throw new CliError(
+          EXIT.failed,
+          `Too many aliased locales for one Rails pull (${joined.length} > ${FILE_LOCALES_MAX} characters of "locales" pairs). Pull one locale at a time with --locale.`,
+        );
+      }
+      if (joined !== '') query.fileLocales = joined;
     }
     if (opts.from !== undefined) query.from = opts.from;
     if (opts.onlyApproved) query.approvedOnly = 'true';

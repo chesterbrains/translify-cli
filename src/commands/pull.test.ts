@@ -499,6 +499,57 @@ describe('runPull format yaml', () => {
   });
 });
 
+describe('runPull format yaml refusal hints and fileLocales cap', () => {
+  const rails = (locales: Record<string, string> = {}): Config => ({
+    apiUrl: 'https://x/api',
+    files: [{ pattern: 'config/locales/{locale}.yml', format: 'yaml', yamlDialect: 'rails', namespace: 'rails' }],
+    locales,
+  });
+  const refuse = async (reasons: string[]): Promise<string> => {
+    const body = {
+      code: 'YAML_UNSUPPORTED',
+      total: reasons.length,
+      cells: reasons.map((reason, i) => ({ namespace: 'rails', key: `k${i}`, locale: 'en', reason })),
+    };
+    const client = { get: vi.fn(async () => { throw new CliError(6, 'x', body); }) };
+    const failure = (await runPull({}, { cwd: await tmp(), config: rails(), api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
+
+    return failure.message;
+  };
+
+  it('hints per reason group, not the ICU hint for a list gap', async () => {
+    const gap = await refuse(['arrayGap']);
+    expect(gap).toMatch(/Translate every item of the list, or clear them all\./);
+    expect(gap).not.toMatch(/Rewrite each key as plain text/);
+  });
+
+  it('hints invalidRaw and keyConflict', async () => {
+    expect(await refuse(['invalidRaw'])).toMatch(/Fix the value so it is the same kind as the source \(true\/false, a number, a :symbol list\)\./);
+    expect(await refuse(['keyConflict'])).toMatch(/Rename one of the keys: YAML cannot nest below a key that has a value\./);
+  });
+
+  it('keeps the ICU hint for ICU reasons, and prints each group once', async () => {
+    const icu = await refuse(['unsupportedIcu']);
+    expect(icu).toMatch(/Rewrite each key as plain text with placeholders or one plural, or move the key to a JSON rule\./);
+    expect(icu).not.toMatch(/Translate every item/);
+    const mixed = await refuse(['unsupportedIcu', 'arrayGap', 'arrayGap', 'keyConflict']);
+    expect(mixed.match(/Translate every item/g)).toHaveLength(1);
+    expect(mixed).toMatch(/Rewrite each key/);
+    expect(mixed).toMatch(/Rename one of the keys/);
+  });
+
+  it('fails clearly when the aliased locales would not fit the fileLocales parameter', async () => {
+    const locales: Record<string, string> = {};
+    for (let i = 0; i < 400; i++) locales[`en_${String(i).padStart(4, '0')}_LONGNAME`] = `en-${String(i).padStart(4, '0')}`;
+    const client = { get: vi.fn(async () => ({ files: [], warnings: [] })) };
+    const failure = (await runPull({}, { cwd: await tmp(), config: rails(locales), api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
+
+    expect(failure).toBeInstanceOf(CliError);
+    expect(failure.message).toMatch(/too many aliased locales/i);
+    expect(client.get).not.toHaveBeenCalled();
+  });
+});
+
 describe('runPull format strings', () => {
   it('renders STRINGS_UNSUPPORTED like the dialect refusal, exit 6', async () => {
     const config: Config = {
