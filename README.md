@@ -347,6 +347,89 @@ Not supported in this version (the pull is refused with `STRINGS_UNSUPPORTED`, t
 formats without a known printf type (e.g. currency), a translation whose shape differs from the source (plain text for a
 plural), and keys whose placeholders are printf or i18next rather than ICU.
 
+## Rails (YAML)
+
+Rails keeps translations in `config/locales/*.yml`, one `<locale>:` root per file. Set `format: "yaml"`, `yamlDialect: "rails"`
+and a fixed `namespace` on the rule (a `yaml` rule cannot use `{namespace}`: one rule is one namespace). Translify keeps ICU,
+so the same keys serve React, Flutter, iOS, Android and Rails, and Rails translations get placeholder validation (a lost
+`%{name}` in Italian fails at runtime, not at build).
+
+```json
+{
+  "files": [
+    { "pattern": "config/locales/{locale}.yml", "format": "yaml", "yamlDialect": "rails", "namespace": "app" },
+    { "pattern": "config/locales/devise.{locale}.yml", "format": "yaml", "yamlDialect": "rails", "namespace": "devise" }
+  ],
+  "locales": { "en_US": "en-US" }
+}
+```
+
+`translify init` looks in `config/locales` of a Rails app (a `Gemfile` or `config/application.rb`) and writes one rule per file
+shape: a locale in the file name (`devise.en.yml` → `devise.{locale}.yml`) or in a directory (`en/devise.yml` →
+`{locale}/devise.yml`); the namespace is the shape's name, kebab-case. A file with several locales (`all.yml`) or a root
+that does not match its name is skipped with a note, and so is a skipped file that one of the proposed rules would still
+match (push would read it as a locale file): rename or move it.
+
+The root key is the locale as the file names it. The `locales` map above is how `en_US:` on disk becomes the Translify
+locale `en-US` (and back on pull). A file that holds several locales is refused on push.
+
+Workflow:
+
+1. `translify push` sends `config/locales/en.yml` (the default locale) and any other locale file you already have.
+2. Translate in Translify.
+3. `translify pull` writes the other locale files. Rails falls back to the default locale for a key a locale does not
+   have, so untranslated keys are left out.
+
+What `pull` writes (dotted keys nest, `#` in a plural becomes `%{count}`):
+
+| Translify value | Written |
+|---|---|
+| `Hello, {name}` | `key: Hello, %{name}` |
+| `Total: {amount, number}` | `key: "Total: %{amount}"` |
+| `{count, plural, =0 {No items} one {# item} other {# items}}` (the whole message) | `key:` with `zero:` / `one:` / `other:` below it (`=0` is `zero`, categories sorted alphabetically) |
+| `home.title` | `home:` with `title:` below it |
+| `colors.0`, `colors.1` pushed from a list | `colors:` with one `- item` each; left out of a locale until every item is translated |
+| a description | `# …` on the line directly above the key, in the default-locale file only |
+
+A plural is a mapping of categories only (`other` required) and its count argument must be named `count`. `zero:` is `=0`
+only for a locale with no CLDR `zero` category (English, Italian); for a locale that has one (Arabic) `zero` is `zero` and
+`=0` is refused. A literal `%%` is kept exactly as written, so a pulled file pushed back is unchanged.
+
+Framework data: Rails files hold more than strings, and Translify keeps it. A list of strings is a set of keys `name.0`,
+`name.1`, … (`nil` items such as the leading `~` of rails-i18n `date.month_names` are remembered, not given a key). Raw
+values (booleans, numbers, symbols such as `:year`, other lists, `''`) are ordinary editable keys whose text is the YAML
+literal; they are written Psych-normalized (`no` becomes `false`) and served as that plain text by every other format and by
+delivery. Keys that come from a Rails file are always ICU, so rails-i18n strftime values such as `%Y-%m-%d` are literal
+text, never printf placeholders.
+
+Output is byte-identical to `i18n-tasks normalize`: `---` first line, keys sorted at every level, 2-space indent, comments
+and anchors gone, trailing newline, `<locale>: {}` when empty. If you use i18n-tasks, tell it not to wrap long lines,
+otherwise `normalize` folds a long value over several lines that Translify never wraps. In `config/i18n-tasks.yml`:
+
+```yaml
+data:
+  yaml:
+    write:
+      line_width: -1
+```
+
+The first `pull` normalizes the files (drops comments other than descriptions, re-sorts, quotes the way Psych does); commit
+them before relying on `status` in CI. After that a pull rewrites nothing that did not change.
+
+What `push` reads: strings, plural mappings, lists and raw values; aliases and `<<` merges are expanded. `%{name}` →
+`{name}`, `%%{` → a literal `%{`, other text is ICU-escaped. Comments directly above a key in the default-locale file become
+its description. In a target-locale file an unquoted `yes` / `no` or number on a text key is stored as text with a warning,
+and `''` or `~` on a text key is skipped with a warning (Rails falls back to the default). A raw value of another kind than the
+source, or a list where the source is text, is a row error (`kindMismatch`); other row errors are `duplicateKey`,
+`invalidKey`, `invalidPlural` and `unsupportedElement`. A YAML syntax error is `File is not valid YAML (line N)`.
+
+Not supported in this version (the pull is refused with `YAML_UNSUPPORTED`, the output lists the cells and why): `select` and
+`selectordinal`, exact matches other than `=0` and `offset`, text around a plural, two plurals in one message, nested
+plurals, a plural not on `count`, number formats without a `%{}` equivalent (e.g. currency), an argument name outside
+`[A-Za-z0-9_]`, a literal `%` directly before an argument, a translation whose shape differs from the source, a key that is also
+the prefix of another (`a` and `a.b`), a list with a gap in the default locale (`arrayGap`), and keys whose placeholders are
+printf or i18next rather than ICU.
+
 ## `translify.json` reference
 
 `translify.json` lives in the repository root; every command reads it from the current directory. The
@@ -358,12 +441,13 @@ fields are refused, and so is any field whose name contains `key`, `secret` or `
 | `$schema` | string | no | Schema URL for editor support. Ignored by the CLI. |
 | `apiUrl` | URL | yes | The Translify API base, ending in `/api`, e.g. `https://translify.tommasofeltrin.work/api`. |
 | `files` | array | yes | One rule per kind of translation file. Each rule has the fields below. |
-| `files[].pattern` | string | yes | Path relative to `translify.json`, with `/` separators. Must contain `{locale}` once and may contain `{namespace}` once (not for `strings`/`stringsdict`), e.g. `locales/{locale}/{namespace}.json`. |
-| `files[].format` | `json` \| `xliff` \| `arb` \| `android` \| `strings` \| `stringsdict` | yes | File format: i18next JSON, XLIFF, Flutter ARB, Android `strings.xml` ([Android (strings.xml)](#android-stringsxml)) or iOS `.strings` / `.stringsdict` ([iOS (.strings / .stringsdict)](#ios-strings--stringsdict)). |
-| `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb`, `android`, `strings` and `stringsdict` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
+| `files[].pattern` | string | yes | Path relative to `translify.json`, with `/` separators. Must contain `{locale}` once and may contain `{namespace}` once (not for `strings`/`stringsdict`/`yaml`), e.g. `locales/{locale}/{namespace}.json`. |
+| `files[].format` | `json` \| `xliff` \| `arb` \| `android` \| `strings` \| `stringsdict` \| `yaml` | yes | File format: i18next JSON, XLIFF, Flutter ARB, Android `strings.xml` ([Android (strings.xml)](#android-stringsxml)), iOS `.strings` / `.stringsdict` ([iOS (.strings / .stringsdict)](#ios-strings--stringsdict)) or Rails YAML ([Rails (YAML)](#rails-yaml)). |
+| `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb`, `android`, `strings`, `stringsdict` and `yaml` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
 | `files[].jsonStyle` | `nested` \| `flat` | no | Only for `json`. `nested` (the default) writes `{ "a": { "b": "…" } }`, `flat` writes `{ "a.b": "…" }`. |
 | `files[].xliffDialect` | `angular` \| `xcode` | no | Only for `xliff`. `angular` writes `@angular/localize` placeholders on pull and reads `ng extract-i18n` output on push ([Angular (XLIFF)](#angular-xliff)); `xcode` writes XLIFF 1.2 for String Catalogs and reads `xcodebuild -exportLocalizations` output ([Xcode (XLIFF)](#xcode-xliff)). |
 | `files[].xliffOriginal` | string | with `xliffDialect: "xcode"` | The String Catalog path Xcode knows, e.g. `Sources/App/Localizable.xcstrings`; written to `<file original>`. Xcode imports nothing when it does not match the project. Only with `xcode`. |
+| `files[].yamlDialect` | `rails` | with `format: "yaml"` | Required with `yaml`, refused otherwise. `rails` reads and writes Rails i18n YAML, normalized like `i18n-tasks normalize` ([Rails (YAML)](#rails-yaml)). |
 | `locales` | object | no | Maps a locale name on disk to a Translify locale code, e.g. `{ "en_US": "en-US" }`. Unmapped names pass through unchanged. Two names may not map to the same code, and a target may not itself be a mapped name. The map renames files only: an XLIFF's `trgLang` (2.0) or `target-language` (1.2), when present, must be the Translify code itself, or `push` is refused with `File targets it but it-IT was requested`. |
 
 Each file must be matched by one rule only, and each (locale, namespace) pair must come from one file only;
@@ -373,7 +457,7 @@ otherwise the CLI stops before sending anything and names the files involved.
 
 | Command | What it does |
 |---|---|
-| `translify init` | Create `translify.json`: detects i18next, Flutter, Angular, Xcode and Android layouts, asks for your key (interactive, or `--yes`) |
+| `translify init` | Create `translify.json`: detects i18next, Flutter, Angular, Xcode, Android and Rails layouts, asks for your key (interactive, or `--yes`) |
 | `translify login` | Store a secret key on this machine (interactive) |
 | `translify push` | Upload source and target files |
 | `translify pull` | Download translation files |
@@ -593,7 +677,7 @@ project when a rule uses `{namespace}`. It needs a key with the `pull` scope.
 | 3 | Plan quota exceeded |
 | 4 | Network failure, server error, push too large, CLI too old, transaction conflict, or rate limited after 3 retries |
 | 5 | `publish --fail-on-withheld`: the publish went through, but the review gate withheld some translations |
-| 6 | Placeholder errors: `lint` found them (or more warnings than `--max-warnings`), `publish` refused because translations with errors would go live, or `pull` refused an Angular/Xcode XLIFF, Android or iOS rule |
+| 6 | Placeholder errors: `lint` found them (or more warnings than `--max-warnings`), `publish` refused because translations with errors would go live, or `pull` refused an Angular/Xcode XLIFF, Android, iOS or Rails YAML rule |
 
 The server's error `code` decides the exit code first; the HTTP status is only used for codes the CLI does not know.
 
@@ -624,6 +708,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `XLIFF_DIALECT_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written in the rule's XLIFF dialect (Angular: text beside a plural, nested plurals, number/date formats; Xcode: `select`, `=0`/`offset`, a translation of a different shape; both: printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Angular (XLIFF)](#angular-xliff) and [Xcode (XLIFF)](#xcode-xliff). |
 | `ANDROID_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Android `strings.xml` (`select`, `=0`/`offset`, text around a plural, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys, a key with `-` or a leading digit, a gapped array). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Android (strings.xml)](#android-stringsxml). |
 | `STRINGS_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as iOS `.strings` / `.stringsdict` (`select`, exact matches other than `=0`, `offset`, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [iOS (.strings / .stringsdict)](#ios-strings--stringsdict). |
+| `YAML_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Rails YAML (`select`, exact matches other than `=0`, `offset`, text around a plural, two or nested plurals, a plural not on `count`, an unknown number format, an argument name outside `[A-Za-z0-9_]`, a `%` before an argument, a translation of a different shape, a key that prefixes another, a gapped list, printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Rails (YAML)](#rails-yaml). |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |
