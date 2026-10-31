@@ -3,12 +3,13 @@ import { detectAppleStrings } from './apple-strings.js';
 import { detectAngular } from './angular.js';
 import { detectFlutter } from './flutter.js';
 import { detectI18next } from './i18next.js';
+import { detectRails } from './rails.js';
 import { ordinal, type Detection, type Detector } from './shared.js';
 import { detectXcode } from './xcode.js';
 
 export type { Detection, Detector } from './shared.js';
 
-const DETECTORS: Detector[] = [detectI18next, detectFlutter, detectAngular, detectXcode, detectAndroid, detectAppleStrings];
+const DETECTORS: Detector[] = [detectI18next, detectFlutter, detectAngular, detectXcode, detectAndroid, detectAppleStrings, detectRails];
 
 /**
  * Each detector picks namespaces alone, so two of them can both pick `localizable`. A later detector's

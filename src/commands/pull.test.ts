@@ -440,6 +440,65 @@ describe('runPull format android', () => {
   });
 });
 
+describe('runPull format yaml', () => {
+  const rails = (locales: Record<string, string> = {}): Config => ({
+    apiUrl: 'https://x/api',
+    files: [{ pattern: 'config/locales/{locale}.yml', format: 'yaml', yamlDialect: 'rails', namespace: 'rails' }],
+    locales,
+  });
+  const yml = (locale: string) => ({ locale, namespace: 'rails', format: 'yaml', content: 'a: b\n' });
+
+  it('sends dialect=rails and fileLocales for an aliased locale', async () => {
+    const cwd = await tmp();
+    const client = { get: vi.fn(async () => ({ files: [yml('en-US')], warnings: [] })) };
+    await runPull({}, { cwd, config: rails({ en_US: 'en-US' }), api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', {
+      format: 'yaml',
+      dialect: 'rails',
+      fileLocales: 'en-US:en_US',
+      namespaces: 'rails',
+    });
+    expect(await readFile(join(cwd, 'config/locales/en_US.yml'), 'utf8')).toBe('a: b\n');
+  });
+
+  it('omits fileLocales when no locale is aliased', async () => {
+    const client = { get: vi.fn(async () => ({ files: [], warnings: [] })) };
+    await runPull({}, { cwd: await tmp(), config: rails(), api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'yaml', dialect: 'rails', namespaces: 'rails' });
+  });
+
+  it('renders YAML_UNSUPPORTED like the dialect refusal, exit 6', async () => {
+    const body = { code: 'YAML_UNSUPPORTED', total: 1, cells: [{ namespace: 'rails', key: 'k', locale: 'en', reason: 'unsupportedIcu' }] };
+    const client = { get: vi.fn(async () => { throw new CliError(6, 'x', body); }) };
+
+    const failure = (await runPull({}, { cwd: await tmp(), config: rails(), api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
+
+    expect(failure.exitCode).toBe(6);
+    expect(failure.message).toMatch(/Pull refused: 1 translation\(s\) cannot be written as Rails YAML/);
+    expect(failure.message).toMatch(/a select, or other ICU/);
+    expect(failure.message).not.toMatch(/select\)/);
+  });
+
+  it('explains a Rails arrayGap and exactMatch in terms that fit Rails', async () => {
+    const body = {
+      code: 'YAML_UNSUPPORTED',
+      total: 2,
+      cells: [
+        { namespace: 'rails', key: 'days.1', locale: 'it', reason: 'arrayGap' },
+        { namespace: 'rails', key: 'n', locale: 'ar', reason: 'exactMatch' },
+      ],
+    };
+    const client = { get: vi.fn(async () => { throw new CliError(6, 'x', body); }) };
+
+    const failure = (await runPull({}, { cwd: await tmp(), config: rails(), api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
+
+    expect(failure.message).toMatch(/a target list only partly translated \(Rails\)/);
+    expect(failure.message).toMatch(/in Rails for a locale without a CLDR zero category/);
+  });
+});
+
 describe('runPull format strings', () => {
   it('renders STRINGS_UNSUPPORTED like the dialect refusal, exit 6', async () => {
     const config: Config = {

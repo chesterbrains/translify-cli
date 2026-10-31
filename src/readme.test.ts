@@ -137,4 +137,17 @@ describe('README', () => {
     const options: string = section('Commands');
     expect(options).toMatch(/- `init`: .*`-y\/--yes`.*`--api-url <url>`/);
   });
+
+  it('documents the Rails rule, normalize layout, framework data and array gaps', () => {
+    const rails: string = section('Rails (YAML)');
+    for (const needle of ['"yamlDialect": "rails"', 'i18n-tasks normalize', 'line_width', 'arrayGap', '"locales"']) {
+      expect(rails, needle).toContain(needle);
+    }
+    expect(rails).toContain('%%%{');
+    expect(rails).toContain('invalidRaw');
+    expect(rails).not.toContain('literal `%` directly before an argument');
+    expect(rails).not.toContain('`%%{` → a literal');
+    expect(readme).not.toContain('a `%` before an argument');
+    expect(readme).not.toContain('percentBeforeArg');
+  });
 });

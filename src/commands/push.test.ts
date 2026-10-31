@@ -417,3 +417,21 @@ describe('runPush xliffDialect xcode', () => {
     expect(s.out.join('\n')).toMatch(/warning: Localization\/en\.xliff: original mismatch/);
   });
 });
+
+describe('runPush format yaml', () => {
+  it('puts dialect and fileLocale (only when aliased) on the manifest', async () => {
+    const s = await setup(vi.fn().mockResolvedValue(response()));
+    await mkdir(join(s.cwd, 'config/locales'), { recursive: true });
+    await writeFile(join(s.cwd, 'config/locales/en.yml'), 'en: {}');
+    await writeFile(join(s.cwd, 'config/locales/en_US.yml'), 'en_US: {}');
+    s.deps.config.files = [{ pattern: 'config/locales/{locale}.yml', format: 'yaml', yamlDialect: 'rails', namespace: 'rails' }];
+    s.deps.config.locales = { en_US: 'en-US' };
+
+    await runPush({}, s.deps);
+
+    expect(JSON.parse(String(formOf(s.post, 0).get('manifest')))).toEqual([
+      { field: 'file0', path: 'config/locales/en.yml', format: 'yaml', locale: 'en', namespace: 'rails', dialect: 'rails' },
+      { field: 'file1', path: 'config/locales/en_US.yml', format: 'yaml', locale: 'en-US', namespace: 'rails', dialect: 'rails', fileLocale: 'en_US' },
+    ]);
+  });
+});

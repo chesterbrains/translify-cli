@@ -37,9 +37,9 @@ const readOrUndefined = async (path: string): Promise<string | undefined> =>
 
 const NESTED_CONFLICT: RegExp = /nested JSON cannot hold both/;
 
-/** The 422 `XLIFF_DIALECT_UNSUPPORTED` / `ANDROID_UNSUPPORTED` body: up to 100 cells, `total` counts them all. */
+/** The 422 `XLIFF_DIALECT_UNSUPPORTED` / `ANDROID_UNSUPPORTED` / `YAML_UNSUPPORTED` body: up to 100 cells, `total` counts them all. */
 interface DialectBody {
-  code: 'XLIFF_DIALECT_UNSUPPORTED' | 'ANDROID_UNSUPPORTED' | 'STRINGS_UNSUPPORTED';
+  code: 'XLIFF_DIALECT_UNSUPPORTED' | 'ANDROID_UNSUPPORTED' | 'STRINGS_UNSUPPORTED' | 'YAML_UNSUPPORTED';
   total: number;
   cells: ReasonCell[];
 }
@@ -47,17 +47,19 @@ interface DialectBody {
 const isDialectUnsupported = (details: unknown): details is DialectBody =>
   typeof details === 'object' &&
   details !== null &&
-  ['XLIFF_DIALECT_UNSUPPORTED', 'ANDROID_UNSUPPORTED', 'STRINGS_UNSUPPORTED'].includes((details as { code?: string }).code ?? '');
+  ['XLIFF_DIALECT_UNSUPPORTED', 'ANDROID_UNSUPPORTED', 'STRINGS_UNSUPPORTED', 'YAML_UNSUPPORTED'].includes((details as { code?: string }).code ?? '');
 
 /** The server's one-line refusal, the cells grouped like `lint`, and the way out. */
-const dialectRefusal = (body: DialectBody, config: Config, dialect: string): CliError => {
+const dialectRefusal = (body: DialectBody, config: Config, dialect: string = 'angular'): CliError => {
   const cells: ReasonCell[] = Array.isArray(body.cells) ? body.cells : [];
   const target: string =
     body.code === 'ANDROID_UNSUPPORTED'
       ? 'Android strings.xml'
       : body.code === 'STRINGS_UNSUPPORTED'
         ? 'iOS .strings/.stringsdict'
-        : `XLIFF for ${dialect}`;
+        : body.code === 'YAML_UNSUPPORTED'
+          ? 'Rails YAML'
+          : `XLIFF for ${dialect}`;
   const lines: string[] = [
     `Pull refused: ${body.total} translation(s) cannot be written as ${target}. Nothing was written.`,
     ...renderReasonCells(cells, config),
@@ -66,7 +68,9 @@ const dialectRefusal = (body: DialectBody, config: Config, dialect: string): Cli
   lines.push(
     body.code === 'STRINGS_UNSUPPORTED'
       ? 'Split the text so each key is plain text with placeholders or one plural (`=0` allowed; no `select`), or move the key to a JSON rule.'
-      : 'Split the text so each key is plain text with placeholders or one plural/select (Android: one plural), or move the key to a JSON rule.',
+      : body.code === 'YAML_UNSUPPORTED'
+        ? 'Rewrite each key as plain text with placeholders or one plural, or move the key to a JSON rule.'
+        : 'Split the text so each key is plain text with placeholders or one plural/select (Android: one plural), or move the key to a JSON rule.',
   );
 
   return new CliError(EXIT.issues, lines.join('\n'), body);
@@ -125,6 +129,15 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     if (rule.format === 'json' && rule.jsonStyle !== undefined) query.jsonStyle = rule.jsonStyle;
     if (rule.format === 'xliff' && rule.xliffDialect !== undefined) query.dialect = rule.xliffDialect;
     if (rule.format === 'xliff' && rule.xliffOriginal !== undefined) query.original = rule.xliffOriginal;
+    if (rule.format === 'yaml' && rule.yamlDialect !== undefined) {
+      query.dialect = rule.yamlDialect;
+      // The file's locale key follows the disk name (en_US), the server only knows Translify codes.
+      const requested: string[] = opts.locale === undefined ? Object.values(deps.config.locales) : [toTranslifyLocale(opts.locale, deps.config)];
+      const aliased: string[] = [...new Set(requested)]
+        .filter((code) => toFsLocale(code, deps.config) !== code)
+        .map((code) => `${code}:${toFsLocale(code, deps.config)}`);
+      if (aliased.length > 0) query.fileLocales = aliased.join(',');
+    }
     if (opts.from !== undefined) query.from = opts.from;
     if (opts.onlyApproved) query.approvedOnly = 'true';
     if (opts.locale !== undefined) query.locales = toTranslifyLocale(opts.locale, deps.config);
@@ -133,7 +146,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
 
     const res: PullResponse = await deps.api.get<PullResponse>('/cli/v1/pull', query).catch((error: unknown) => {
       if (error instanceof CliError && isDialectUnsupported(error.details)) {
-        throw dialectRefusal(error.details, deps.config, rule.xliffDialect ?? 'angular');
+        throw dialectRefusal(error.details, deps.config, rule.xliffDialect);
       }
       throw error;
     });

@@ -17,11 +17,12 @@ const fileRule = z
       .refine((value) => value.split('{locale}').length <= 2 && value.split('{namespace}').length <= 2, {
         message: 'may use each of {locale} and {namespace} only once',
       }),
-    format: z.enum(['json', 'xliff', 'arb', 'android', 'strings', 'stringsdict']),
+    format: z.enum(['json', 'xliff', 'arb', 'android', 'strings', 'stringsdict', 'yaml']),
     namespace: z.string().regex(NAMESPACE, 'must be lowercase kebab-case').max(64).optional(),
     jsonStyle: z.enum(['nested', 'flat']).optional(),
     xliffDialect: z.enum(['angular', 'xcode']).optional(),
     xliffOriginal: z.string().min(1).max(512).optional(),
+    yamlDialect: z.enum(['rails']).optional(),
   })
   .strict()
   .superRefine((rule, ctx) => {
@@ -30,12 +31,14 @@ const fileRule = z
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'ARB files need a fixed namespace' });
     } else if (rule.format === 'android' && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'Android files need a fixed namespace' });
+    } else if (rule.format === 'yaml' && rule.namespace === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'Rails YAML files need a fixed namespace' });
     } else if ((rule.format === 'strings' || rule.format === 'stringsdict') && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: '.strings files need a fixed namespace' });
     } else if (!hasPlaceholder && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'needed when the pattern has no {namespace}' });
     }
-    if (hasPlaceholder && (rule.format === 'strings' || rule.format === 'stringsdict')) {
+    if (hasPlaceholder && (rule.format === 'strings' || rule.format === 'stringsdict' || rule.format === 'yaml')) {
       ctx.addIssue({ code: 'custom', path: ['pattern'], message: `{namespace} does not apply to format "${rule.format}"` });
     }
     if (rule.jsonStyle !== undefined && rule.format !== 'json') {
@@ -43,6 +46,12 @@ const fileRule = z
     }
     if (rule.xliffDialect !== undefined && rule.format !== 'xliff') {
       ctx.addIssue({ code: 'custom', path: ['xliffDialect'], message: 'only applies to format "xliff"' });
+    }
+    if (rule.yamlDialect !== undefined && rule.format !== 'yaml') {
+      ctx.addIssue({ code: 'custom', path: ['yamlDialect'], message: 'only applies to format "yaml"' });
+    }
+    if (rule.format === 'yaml' && rule.yamlDialect === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['yamlDialect'], message: 'required with format "yaml"' });
     }
     if (rule.xliffOriginal !== undefined && rule.xliffDialect !== 'xcode') {
       ctx.addIssue({ code: 'custom', path: ['xliffOriginal'], message: 'only applies to xliffDialect "xcode"' });
