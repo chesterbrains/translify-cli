@@ -200,6 +200,9 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     const namespace: string | undefined = rule.namespace ?? opts.namespace;
     if (namespace !== undefined) base.namespaces = namespace;
 
+    // A split pull reports one merged response per rule: only the files its request was trusted for, each warning once.
+    const merged: PullResponse = { files: [], warnings: [] };
+    if (variants.length > 1) responses.push(merged);
     for (const variant of variants) {
       const res: PullResponse = await deps.api.get<PullResponse>('/cli/v1/pull', { ...base, ...variant.extra }).catch((error: unknown) => {
         if (error instanceof CliError && isDialectUnsupported(error.details)) {
@@ -207,8 +210,13 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
         }
         throw error;
       });
-      responses.push(res);
+      if (variants.length === 1) responses.push(res);
+      else merged.files.push(...res.files.filter((file) => variant.accept(file.locale)));
       for (const warning of res.warnings) {
+        if (variants.length > 1) {
+          if (merged.warnings.includes(warning)) continue;
+          merged.warnings.push(warning);
+        }
         lines.push(`warning: ${warning}`);
         if (!flatHinted && NESTED_CONFLICT.test(warning)) {
           flatHinted = true;

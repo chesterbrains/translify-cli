@@ -571,6 +571,24 @@ describe('runPull format yaml refusal hints and fileLocales cap', () => {
     expect(older.get).toHaveBeenCalledWith('/cli/v1/pull', expect.objectContaining({ fileLocales: 'en-US:en_US,pt-BR:pt_BR,de-DE:de_DE' }));
   });
 
+  it('reports one merged response per rule for a split pull: accepted files only, warnings once', async () => {
+    const locales: Record<string, string> = {};
+    for (let i = 0; i < 300; i++) locales[`en_${String(i).padStart(4, '0')}_LONGNAME`] = `en-${String(i).padStart(4, '0')}`;
+    const out: string[] = [];
+    const client = {
+      get: vi.fn(async (_path: string, query: Record<string, string>) => ({
+        files: ['en', 'en-0000'].map((c) => ({ locale: c, namespace: 'rails', format: 'yaml', content: `${c}: {}\n` })).filter((f) => query.locales === undefined || query.locales.split(',').includes(f.locale)),
+        warnings: ['same warning'],
+      })),
+    };
+    await runPull({ json: true }, { cwd: await tmp(), config: rails(locales), api: client as never, out: (line) => out.push(line) });
+
+    const { responses } = JSON.parse(out.join('')) as { responses: Array<{ files: Array<{ locale: string }>; warnings: string[] }> };
+    expect(responses).toHaveLength(1);
+    expect(responses[0]!.files.map((f) => f.locale).sort()).toEqual(['en', 'en-0000']);
+    expect(responses[0]!.warnings).toEqual(['same warning']);
+  });
+
   it('keeps one request when the pairs fit, and only the requested locale with --locale', async () => {
     const client = { get: vi.fn(async () => ({ files: [], warnings: [] })) };
     await runPull({ locale: 'en_US' }, { cwd: await tmp(), config: rails({ en_US: 'en-US', pt_BR: 'pt-BR' }), api: client as never, out: quiet });
