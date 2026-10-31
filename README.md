@@ -367,7 +367,8 @@ so the same keys serve React, Flutter, iOS, Android and Rails, and Rails transla
 `translify init` looks in `config/locales` of a Rails app (a `Gemfile` or `config/application.rb`) and writes one rule per file
 shape: a locale in the file name (`devise.en.yml` → `devise.{locale}.yml`) or in a directory (`en/devise.yml` →
 `{locale}/devise.yml`); the namespace is the shape's name, kebab-case. A file with several locales (`all.yml`) or a root
-that does not match its name is skipped with a note, and so is a skipped file that one of the proposed rules would still
+that does not match its name is skipped with a note, as is a file named after the locale inside a locale folder
+(`en/en.yml`: a pattern holds `{locale}` once, so rename it, e.g. `en/main.yml`), and so is a skipped file that one of the proposed rules would still
 match (push would read it as a locale file): rename or move it.
 
 The root key is the locale as the file names it. The `locales` map above is how `en_US:` on disk becomes the Translify

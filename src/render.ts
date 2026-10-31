@@ -187,7 +187,8 @@ const REASON_TEXT: Record<string, string> = {
   mixedIcu: 'text next to a plural or select (the whole message must be the ICU)',
   invalidPlural: 'a <plurals> without other, with an unknown quantity, or a repeated one',
   unsupportedElement: 'an <item> without type="string", <array>, or an unknown element',
-  arrayGap: 'a string-array whose item keys are not contiguous from .0',
+  arrayGap:
+    'a list with a missing item: a gap in the source list (Android: string-array item keys not contiguous from .0), or a target list only partly translated (Rails)',
   multipleIcu: 'more than one plural or select in one message',
   nestedIcu: 'a plural or select inside another one',
   ordinal: 'selectordinal has no equivalent in the target format',
@@ -196,7 +197,8 @@ const REASON_TEXT: Record<string, string> = {
   literalBrace: "a quoted literal brace ('{') cannot be loaded by the target format",
   invalidKey: 'the key is not a valid resource name for the target format (Android: letters, digits, _ and ., not starting with a digit)',
   syntax: 'the key uses printf or i18next placeholders, not ICU',
-  exactMatch: 'an exact match other than =0 (iOS), any exact match (Xcode XLIFF, Android), or offset has no plural category',
+  exactMatch:
+    'an exact match or offset has no plural category: =0 works only in iOS files and in Rails for a locale without a CLDR zero category; Xcode XLIFF and Android allow none',
   shapeMismatch: 'the translation is not the same shape as the source (plural vs plain text, or a different plural argument)',
   unsupportedIcu: 'a select, or other ICU the target format cannot express',
   pluralArgName: 'the plural argument is not named count, which Rails requires',

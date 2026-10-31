@@ -480,6 +480,23 @@ describe('runPull format yaml', () => {
     expect(failure.message).toMatch(/a select, or other ICU/);
     expect(failure.message).not.toMatch(/select\)/);
   });
+
+  it('explains a Rails arrayGap and exactMatch in terms that fit Rails', async () => {
+    const body = {
+      code: 'YAML_UNSUPPORTED',
+      total: 2,
+      cells: [
+        { namespace: 'rails', key: 'days.1', locale: 'it', reason: 'arrayGap' },
+        { namespace: 'rails', key: 'n', locale: 'ar', reason: 'exactMatch' },
+      ],
+    };
+    const client = { get: vi.fn(async () => { throw new CliError(6, 'x', body); }) };
+
+    const failure = (await runPull({}, { cwd: await tmp(), config: rails(), api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
+
+    expect(failure.message).toMatch(/a target list only partly translated \(Rails\)/);
+    expect(failure.message).toMatch(/in Rails for a locale without a CLDR zero category/);
+  });
 });
 
 describe('runPull format strings', () => {

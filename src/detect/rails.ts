@@ -23,26 +23,43 @@ const rootKeys = (text: string): string[] => {
   return keys;
 };
 
+/** Path segments under config/locales: the directories, and the file name split on `.` without its extension. */
+const partsOf = (path: string): { dirs: string[]; stem: string[]; ext: string } => {
+  const dirs: string[] = posix.relative(LOCALES_DIR, path).split('/');
+  const file: string = dirs.pop() as string;
+  const ext: string = posix.extname(file);
+
+  return { dirs, stem: posix.basename(file, ext).split('.'), ext };
+};
+
 /**
- * Puts `{locale}` where `locale` sits in the path under config/locales. A directory segment wins over a file-name
- * segment (`en/en.yml` → `{locale}/en.yml`), the last of each wins; undefined when the locale appears nowhere.
+ * A file whose locale is both a directory and part of its name (`en/en.yml`, `en/devise.en.yml`): a pattern holds
+ * `{locale}` once, so `{locale}/en.yml` would read every locale's folder as the `en` file of one namespace.
+ */
+const isLocaleTwice = (path: string, locale: string): boolean => {
+  const { dirs, stem } = partsOf(path);
+
+  return dirs.includes(locale) && stem.includes(locale);
+};
+
+/**
+ * Puts `{locale}` where `locale` sits in the path under config/locales, the last occurrence winning; undefined when
+ * the locale appears nowhere, or both in a directory and in the file name (`isLocaleTwice`).
  */
 const shapeOf = (path: string, locale: string): string | undefined => {
-  const relative: string[] = posix.relative(LOCALES_DIR, path).split('/');
-  const file: string = relative.pop() as string;
-  const dirAt: number = relative.lastIndexOf(locale);
+  if (isLocaleTwice(path, locale)) return undefined;
+  const { dirs, stem, ext } = partsOf(path);
+  const dirAt: number = dirs.lastIndexOf(locale);
   if (dirAt !== -1) {
-    relative[dirAt] = '{locale}';
+    dirs[dirAt] = '{locale}';
 
-    return posix.join(LOCALES_DIR, ...relative, file);
+    return posix.join(LOCALES_DIR, ...dirs, `${stem.join('.')}${ext}`);
   }
-  const ext: string = posix.extname(file);
-  const segments: string[] = posix.basename(file, ext).split('.');
-  const at: number = segments.lastIndexOf(locale);
+  const at: number = stem.lastIndexOf(locale);
   if (at === -1) return undefined;
-  segments[at] = '{locale}';
+  stem[at] = '{locale}';
 
-  return posix.join(LOCALES_DIR, ...relative, `${segments.join('.')}${ext}`);
+  return posix.join(LOCALES_DIR, ...dirs, `${stem.join('.')}${ext}`);
 };
 
 const namespaceOf = (shape: string): string => {
@@ -71,12 +88,15 @@ export async function detectRails(cwd: string): Promise<Detection> {
 
   const shapes: Set<string> = new Set();
   const skipped: string[] = [];
+  const named: string[] = [];
   for (const path of [...paths].sort()) {
     const keys: string[] = rootKeys(await readFile(join(cwd, path), 'utf8').catch(() => ''));
     const locale: string | undefined = keys.length === 1 ? keys[0] : undefined;
-    const shape: string | undefined = locale !== undefined && LOCALE_TOKEN.test(locale) ? shapeOf(path, locale) : undefined;
-    if (shape === undefined) skipped.push(path);
-    else shapes.add(shape);
+    const isLocale: boolean = locale !== undefined && LOCALE_TOKEN.test(locale);
+    const shape: string | undefined = isLocale ? shapeOf(path, locale as string) : undefined;
+    if (shape !== undefined) shapes.add(shape);
+    else if (isLocale && isLocaleTwice(path, locale as string)) named.push(path);
+    else skipped.push(path);
   }
 
   const rules: FileRule[] = [];
@@ -94,10 +114,15 @@ export async function detectRails(cwd: string): Promise<Detection> {
       `Skipped Rails locale files that do not hold exactly one root key equal to the locale in their name: ${skipped.join(', ')}.`,
     );
   }
+  if (named.length > 0) {
+    notes.push(
+      `Skipped Rails locale files named after the locale inside a locale folder (a pattern holds {locale} once): ${named.join(', ')}. Rename them, e.g. en/en.yml to en/main.yml, and run init again.`,
+    );
+  }
   // `{locale}` matches any name, so a skipped file can still be read as a locale file by a proposed rule.
   for (const rule of rules) {
     const { regex } = compile(rule.pattern, false);
-    const caught: string[] = skipped.filter((path) => regex.test(path));
+    const caught: string[] = [...skipped, ...named].filter((path) => regex.test(path));
     if (caught.length > 0) {
       notes.push(
         `${rule.pattern} also matches ${caught.join(', ')}, and push will read them as locale files: rename or move them, or exclude them.`,

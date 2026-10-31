@@ -112,13 +112,32 @@ describe('detectRails', () => {
     });
   });
 
-  it('puts {locale} on the directory when the file is named like the locale too', async () => {
+  it('skips a locale folder holding a file named after the locale, and suggests a rename', async () => {
     const cwd: string = await tree({
       Gemfile: '',
       'config/locales/en/en.yml': yml('en'),
+      'config/locales/it/it.yml': yml('it'),
+      'config/locales/en/devise.yml': yml('en'),
+      'config/locales/it/devise.yml': yml('it'),
     });
+    const { rules, notes } = await detectRails(cwd);
 
-    expect((await detectRails(cwd)).rules).toEqual([rule('config/locales/{locale}/en.yml', 'en')]);
+    expect(rules).toEqual([rule('config/locales/{locale}/devise.yml', 'devise')]);
+    expect(notes).toEqual([
+      'Skipped Rails locale files named after the locale inside a locale folder (a pattern holds {locale} once): config/locales/en/en.yml, config/locales/it/it.yml. Rename them, e.g. en/en.yml to en/main.yml, and run init again.',
+    ]);
+  });
+
+  it('skips en/devise.en.yml too, the locale being in the folder and the name', async () => {
+    const cwd: string = await tree({
+      Gemfile: '',
+      'config/locales/en/devise.en.yml': yml('en'),
+      'config/locales/it/devise.it.yml': yml('it'),
+    });
+    const { rules, notes } = await detectRails(cwd);
+
+    expect(rules).toEqual([]);
+    expect(notes[0]).toContain('config/locales/en/devise.en.yml, config/locales/it/devise.it.yml');
   });
 
   it('warns when a skipped file still matches a proposed rule', async () => {
