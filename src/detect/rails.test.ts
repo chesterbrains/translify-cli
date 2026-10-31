@@ -265,4 +265,40 @@ describe('detectRails', () => {
 
     expect(await detectRails(cwd)).toEqual({ rules: [rule('config/locales/{locale}.yml', 'app')], notes: [] });
   });
+
+  it('accepts a lone locale that is a real two-letter language, not a lone 3-letter or unknown token', async () => {
+    const de: string = await tree({ Gemfile: '', 'config/locales/de.yml': yml('de') });
+    expect((await detectRails(de)).rules.map((r) => r.pattern)).toEqual(['config/locales/{locale}.yml']);
+
+    const pt: string = await tree({ Gemfile: '', 'config/locales/pt-BR.yml': yml('pt-BR') });
+    expect((await detectRails(pt)).rules).toHaveLength(1);
+
+    // "bar" is a language (Bavarian) to Intl, but three letters alone stay unconfirmed.
+    const bar: string = await tree({ Gemfile: '', 'config/locales/foo.bar.yml': yml('bar') });
+    expect((await detectRails(bar)).rules).toEqual([]);
+
+    const xx: string = await tree({ Gemfile: '', 'config/locales/foo.zz.yml': yml('zz') });
+    expect((await detectRails(xx)).rules).toEqual([]);
+  });
+
+  it('assigns namespaces the same way whatever order the files were created in', async () => {
+    const files = ['models/user', 'views/user', 'user'];
+    const build = async (order: string[]): Promise<string[]> => {
+      const entries: Record<string, string> = { Gemfile: '' };
+      for (const f of order) {
+        const dir = f.includes('/') ? `${f.split('/')[0]}/` : '';
+        const name = f.split('/').pop() as string;
+        entries[`config/locales/${dir}${name}.en.yml`] = yml('en');
+      }
+
+      return (await detectRails(await tree(entries))).rules.map((r) => `${r.pattern}=${r.namespace}`);
+    };
+
+    expect(await build(files)).toEqual(await build([...files].reverse()));
+    expect(await build(files)).toEqual([
+      'config/locales/models/user.{locale}.yml=models-user',
+      'config/locales/user.{locale}.yml=user',
+      'config/locales/views/user.{locale}.yml=views-user',
+    ]);
+  });
 });

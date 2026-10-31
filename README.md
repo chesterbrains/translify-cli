@@ -369,7 +369,7 @@ two folders below it (`apps/web`, `backend`; patterns are written relative to th
 shape: a locale in the file name (`devise.en.yml` → `devise.{locale}.yml`) or in a directory (`en/devise.yml` →
 `{locale}/devise.yml`). The namespace is the file's name, kebab-case (`models/user.{locale}.yml` → `user`, or `models-user`
 when `user` is taken; further clashes get `-2`, `-3`). The locale must look like a language code (`en`, `pt-BR`, `zh-Hant`),
-and a shape counts only when two locales share it or its one locale is `en`, so `foo.bar.yml` is not read as locale `bar`
+and a shape counts only when two locales share it or its one locale has a real two-letter language (`de`, `pt-BR`), so `foo.bar.yml` is not read as locale `bar`
 (it is listed in a note). A file with several locales (`all.yml`) or a root
 that does not match its name is skipped with a note, as is a file named after the locale inside a locale folder
 (`en/en.yml`: a pattern holds `{locale}` once, so rename it, e.g. `en/main.yml`), and so is a skipped file that one of the proposed rules would still

@@ -10,6 +10,17 @@ const LOCALES_DIR: string = 'config/locales';
 const IGNORE: string[] = ['**/vendor/**', '**/node_modules/**', '**/tmp/**'];
 /** ISO 639 two or three letters, then optional script (4 letters), region (2 letters or 3 digits). */
 const LOCALE_TOKEN: RegExp = /^[a-z]{2,3}(?:[-_](?:[A-Za-z]{4}|[A-Za-z]{2}|\d{3}))*$/;
+/** Whether Intl knows the two-letter language subtag of `code` (`de`, `pt-BR`); three letters are too permissive (`bar` is Bavarian). */
+const isKnownLanguage = (code: string): boolean => {
+  const language: string = code.split(/[-_]/)[0] as string;
+  if (language.length !== 2) return false;
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'language', fallback: 'none' }).of(language) !== undefined;
+  } catch {
+    return false;
+  }
+};
+
 /** Rails' own default: believed even when it is the only locale file of its shape. */
 const DEFAULT_LOCALE: string = 'en';
 const ROOT_KEY: RegExp = /^(?:"([^"]+)"|'([^']+)'|([^\s:#'"-][^\s:#]*)):(?:\s|$)/;
@@ -129,17 +140,19 @@ export async function detectRails(cwd: string): Promise<Detection> {
     }
   }
 
-  // `foo.bar.yml` reads as locale `bar`; a shape is believed when two locales share it, or its one locale is Rails' default.
+  // `foo.bar.yml` reads as locale `bar`; a shape is believed when two locales share it, or its one locale is a real two-letter language (`en`, `de`, `pt-BR`).
   const unconfirmed: string[] = [];
   for (const [shape, { locales }] of [...shapes]) {
-    if (locales.size >= 2 || locales.has(DEFAULT_LOCALE)) continue;
+    if (locales.size >= 2 || locales.has(DEFAULT_LOCALE) || [...locales].some(isKnownLanguage)) continue;
     unconfirmed.push(...(unconfirmedFiles.get(shape) as string[]));
     shapes.delete(shape);
   }
 
   const rules: FileRule[] = [];
   const taken: Set<string> = new Set();
-  for (const pattern of [...shapes.keys()].sort()) {
+  // Shallow shapes name first (`user.{locale}.yml` before `models/user.{locale}.yml`), then by pattern, so the result never depends on glob order.
+  const depth = (pattern: string): number => partsOf((shapes.get(pattern) as { base: string }).base, pattern).dirs.length;
+  for (const pattern of [...shapes.keys()].sort((a, b) => depth(a) - depth(b) || (a < b ? -1 : a > b ? 1 : 0))) {
     const candidates: string[] = namespaceCandidates((shapes.get(pattern) as { base: string }).base, pattern);
     let namespace: string | undefined = candidates.find((candidate) => !taken.has(candidate));
     if (namespace === undefined) {
@@ -150,6 +163,7 @@ export async function detectRails(cwd: string): Promise<Detection> {
     taken.add(namespace);
     rules.push({ pattern, format: 'yaml', yamlDialect: 'rails', namespace });
   }
+  rules.sort((a, b) => (a.pattern < b.pattern ? -1 : a.pattern > b.pattern ? 1 : 0));
   const notes: string[] = [];
   if (skipped.length > 0) {
     notes.push(
@@ -158,7 +172,7 @@ export async function detectRails(cwd: string): Promise<Detection> {
   }
   if (unconfirmed.length > 0) {
     notes.push(
-      `Skipped Rails files whose name part is not confirmed as a locale (a shape needs two locales, or en): ${unconfirmed.join(', ')}.`,
+      `Skipped Rails files whose name part is not confirmed as a locale (a shape needs two locales or a two-letter language code): ${unconfirmed.join(', ')}.`,
     );
   }
   if (named.length > 0) {
