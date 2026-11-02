@@ -164,6 +164,7 @@ describe('README', () => {
       'unsupportedPlural',
       'nonStringLeaf',
       'easy-admin-bundle',
+      'first Symfony rule',
     ]) {
       expect(symfony, needle).toContain(needle);
     }

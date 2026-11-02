@@ -463,6 +463,11 @@ each has its own dialect:
 One namespace has one file per locale, and one style: a domain cannot be both legacy and ICU in the same project.
 `.yml` is accepted as well as `.yaml` (write the extension you use in the pattern). Keys may only use `[A-Za-z0-9._-]`.
 
+With both rules, the file on disk decides which rule a domain belongs to, in any locale: `messages+intl-icu.en.yaml` makes
+`messages` an ICU domain, and pull writes it only in that style. A domain with no file yet (new in Translify) goes to the
+first Symfony rule in `files`. A domain on disk in both styles is an error that names both files, raised before any
+request; it is the same case the `init` note warns about.
+
 `jsonStyle` picks the layout and defaults to `flat` for the Symfony dialects: `flat` is what `translation:extract` writes
 (`home.title: …` at the top level), `nested` is what `--as-tree` writes at full depth (`home:` with `title:` below it).
 Set the one your project uses; pull then writes it and push reads either.
@@ -502,22 +507,24 @@ What `pull` writes in the legacy style (the ICU style writes the stored ICU text
 Plural segments are positional, one per Symfony slot of the locale: English and French have two (`one`, `other`), Russian
 three (`one`, `few`, `many`), Japanese, Chinese and Turkish one. Exact branches come first (`=0` is `{0} …`, `=1` is
 `{1} …`) and `#` is `%count%`. Categories Symfony cannot select are dropped on pull: `other` on Russian, Ukrainian,
-Belarusian and Polish, `two` on Hebrew, `one` on Turkish. A plural whose source has an `=1` branch writes the text of
-`other` into the `one` slot, so the idiomatic `{0} None|{1} One|]1,Inf[ %count% items` comes back as
-`{0} None|{1} One|%count% items|%count% items`.
+Belarusian and Polish, `two` on Hebrew, `one` on Turkish. A plural whose source has an `=1` branch writes `other`'s text
+into the `one` slot when the source has no `one` category (the idiomatic `{1}` form), so
+`{0} None|{1} One|]1,Inf[ %count% items` comes back as `{0} None|{1} One|%count% items|%count% items`.
 
 Output is byte-identical to Symfony's `Yaml::dump`: 4-space indent, no line folding, single or double quotes as
-symfony/yaml chooses, `{  }` for a namespace with no keys, a trailing newline. Keys are sorted bytewise at every level, and
-a level whose keys are exactly `0` to `n-1` is written as a sequence. Symfony itself keeps catalogue order, and
-`translation:extract --sort=asc` uses PHP's `ksort`; neither is emulated, so `translation:extract` can reorder a pulled file.
+symfony/yaml chooses, `{  }` for a namespace with no keys, a trailing newline. Keys are sorted bytewise at every level, and,
+in the `nested` layout, a level below the top level whose keys are exactly `0` to `n-1` is written as a sequence. Symfony
+itself keeps catalogue order, and `translation:extract --sort=asc` uses PHP's `ksort`; neither is emulated, so
+`translation:extract` can reorder a pulled file.
 `translation:extract --force` also rewrites files without comments, so descriptions live in Translify once pushed.
 
 The first `pull` normalizes the files once (quoting, sorting, and the repeated `one` slot above); commit them before
 relying on `status` in CI. After that a pull rewrites nothing that did not change, and a pulled file pushed back
 unchanged is `0 updated`, with no revision and no demotion, keys created elsewhere included.
 
-What `push` reads as a plural: a value with a single `|` and either a segment that starts with an interval (`{0}`, `[2,Inf]`,
-`]1,Inf[`) or `%count%` somewhere in the text. `Login | Register` stays text. Inside a plural:
+What `push` reads as a plural: a value with at least one `|` that is not part of `||` (`||` is a literal pipe); then a
+segment starting with an interval (`{0}`, `[2,Inf]`, `]1,Inf[`) or `%count%` anywhere makes it a plural.
+`Login | Register` stays text. Inside a plural:
 
 - `{n}` becomes an exact branch.
 - An interval that is unbounded above and includes every integer from 2 (`]1,Inf[`, `[2,Inf]`, `]0,Inf[`, `[0,Inf[`)
@@ -543,8 +550,8 @@ Not supported in this version (the pull is refused with `YAML_UNSUPPORTED`, exit
 for the legacy dialect, a text with a bare `|` that push would read back as a plural, because it holds `%count%` or an
 interval-looking segment (`literalPipe`; use the ICU dialect or reword), plus `select`, `offset`, text around a plural, two
 or nested plurals, a plural not on `count`, formatted arguments other than `number`, an argument name outside
-`[A-Za-z0-9_]`, a target whose shape differs from the source, and keys created elsewhere whose placeholders are printf or
-i18next. The ICU dialect refuses only keys that are not ICU and invalid ICU.
+`[A-Za-z0-9_]`, a target whose shape differs from the source, invalid ICU (`invalidIcu`), and keys created elsewhere whose
+placeholders are printf or i18next. The ICU dialect refuses only keys that are not ICU and invalid ICU.
 
 Not supported by the rule shape: a domain outside the namespace grammar needs a fixed `namespace` (see `init` above), and
 a domain cannot be both legacy and ICU in one project.
@@ -576,7 +583,7 @@ otherwise the CLI stops before sending anything and names the files involved.
 
 | Command | What it does |
 |---|---|
-| `translify init` | Create `translify.json`: detects i18next, Flutter, Angular, Xcode, Android and Rails layouts, asks for your key (interactive, or `--yes`) |
+| `translify init` | Create `translify.json`: detects i18next, Flutter, Angular, Xcode, Android, Rails and Symfony layouts, asks for your key (interactive, or `--yes`) |
 | `translify login` | Store a secret key on this machine (interactive) |
 | `translify push` | Upload source and target files |
 | `translify pull` | Download translation files |
@@ -827,7 +834,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `XLIFF_DIALECT_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written in the rule's XLIFF dialect (Angular: text beside a plural, nested plurals, number/date formats; Xcode: `select`, `=0`/`offset`, a translation of a different shape; both: printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Angular (XLIFF)](#angular-xliff) and [Xcode (XLIFF)](#xcode-xliff). |
 | `ANDROID_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Android `strings.xml` (`select`, `=0`/`offset`, text around a plural, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys, a key with `-` or a leading digit, a gapped array). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Android (strings.xml)](#android-stringsxml). |
 | `STRINGS_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as iOS `.strings` / `.stringsdict` (`select`, exact matches other than `=0`, `offset`, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [iOS (.strings / .stringsdict)](#ios-strings--stringsdict). |
-| `YAML_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Rails or Symfony YAML (`select`, exact matches other than `=0`, `offset`, text around a plural, two or nested plurals, a plural not on `count`, an unknown number format, an argument name outside `[A-Za-z0-9_]`, a translation of a different shape, a key that prefixes another, a gapped or partly translated list, an unparsable raw value (`invalidRaw`), printf/i18next keys created elsewhere). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule; the closing hint depends on the reasons (a list gap: translate every item or clear them all; `invalidRaw`: fix the value to the source's kind; `keyConflict`: rename one of the keys; Symfony `literalPipe`: use the `symfony-icu` dialect or reword the text). See [Rails (YAML)](#rails-yaml) and [Symfony (YAML)](#symfony-yaml). |
+| `YAML_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Rails or Symfony YAML. Rails: `select`, exact matches other than `=0`, `offset`, text around a plural, two or nested plurals, a plural not on `count`, an unknown number format, an argument name outside `[A-Za-z0-9_]`, a translation of a different shape, a key that prefixes another (`keyConflict`), a gapped or partly translated list (`arrayGap`), an unparsable raw value (`invalidRaw`), printf/i18next keys created elsewhere. Symfony (legacy dialect): a bare `\|` that push would read back as a plural (`literalPipe`), `select`, `offset`, text around a plural, two or nested plurals, a plural not on `count`, formatted arguments other than `number`, an argument name outside `[A-Za-z0-9_]`, a target whose shape differs from the source, printf/i18next keys created elsewhere, invalid ICU (`invalidIcu`); any `{n}` exact match is accepted, and there is no `keyConflict`, `invalidRaw` or `arrayGap`. Symfony ICU dialect: only non-ICU keys and `invalidIcu`. Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule; the closing hint depends on the reasons (a list gap: translate every item or clear them all; `invalidRaw`: fix the value to the source's kind; `keyConflict`: rename one of the keys; `literalPipe`: use the `symfony-icu` dialect or reword the text). See [Rails (YAML)](#rails-yaml) and [Symfony (YAML)](#symfony-yaml). |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |
