@@ -8,6 +8,9 @@ import { CliError, EXIT } from './errors.js';
 const NAMESPACE = /^[a-z0-9-]+$/;
 const LOCALE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
 
+/** The two Symfony YAML dialects: legacy `%name%` + pipe plurals, and `+intl-icu` ICU verbatim. */
+export const isSymfonyDialect = (dialect: string | undefined): boolean => dialect === 'symfony' || dialect === 'symfony-icu';
+
 const fileRule = z
   .object({
     pattern: z
@@ -28,7 +31,7 @@ const fileRule = z
   .superRefine((rule, ctx) => {
     const hasPlaceholder: boolean = rule.pattern.includes('{namespace}');
     const rails: boolean = rule.format === 'yaml' && rule.yamlDialect === 'rails';
-    const symfony: boolean = rule.format === 'yaml' && (rule.yamlDialect === 'symfony' || rule.yamlDialect === 'symfony-icu');
+    const symfony: boolean = rule.format === 'yaml' && isSymfonyDialect(rule.yamlDialect);
     if (rule.format === 'arb' && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'ARB files need a fixed namespace' });
     } else if (rule.format === 'android' && rule.namespace === undefined) {
@@ -67,7 +70,7 @@ const fileRule = z
   })
   .transform((rule) => {
     if (rule.format === 'json') return { ...rule, jsonStyle: rule.jsonStyle ?? 'nested' };
-    if (rule.format === 'yaml' && (rule.yamlDialect === 'symfony' || rule.yamlDialect === 'symfony-icu')) {
+    if (rule.format === 'yaml' && isSymfonyDialect(rule.yamlDialect)) {
       return { ...rule, jsonStyle: rule.jsonStyle ?? 'flat' };
     }
 

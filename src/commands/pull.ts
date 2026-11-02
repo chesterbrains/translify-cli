@@ -1,12 +1,13 @@
+import fg from 'fast-glob';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
-import type { Config } from '../config.js';
+import { type Config, type FileRule, isSymfonyDialect } from '../config.js';
 import type { ExitCode } from '../errors.js';
 import type { Api } from '../http.js';
 import { pathContext } from '../context.js';
 import { CliError, EXIT, ONLY_APPROVED_NEEDS_WORKING } from '../errors.js';
-import { pathFor, type PathContext, toFsLocale, toTranslifyLocale } from '../patterns.js';
+import { compile, pathFor, type PathContext, toFsLocale, toTranslifyLocale } from '../patterns.js';
 import { renderReasonCells, type ReasonCell } from '../render.js';
 
 interface PullResponse {
@@ -136,6 +137,35 @@ const withDiskLocale = (content: string, translifyLocale: string, config: Config
   return `${JSON.stringify(doc, null, 2)}\n`;
 };
 
+const isSymfonyWildcard = (rule: FileRule): boolean =>
+  rule.namespace === undefined && rule.format === 'yaml' && isSymfonyDialect(rule.yamlDialect);
+
+/**
+ * Wildcard Symfony rules share the namespace space (`messages.en.yaml` vs `messages+intl-icu.en.yaml`): each namespace
+ * belongs to the rule with a file for it on disk, any locale. Both on disk is an error; none falls to the first rule.
+ */
+const symfonyOwners = async (rules: FileRule[], claimed: Set<string>, cwd: string): Promise<Map<string, { rule: FileRule; path: string }>> => {
+  const owners: Map<string, { rule: FileRule; path: string }> = new Map();
+  for (const rule of rules) {
+    const { glob, regex } = compile(rule.pattern, false);
+    const paths: string[] = await fg(glob, { cwd, onlyFiles: true, dot: false });
+    for (const path of paths.map((value) => value.replaceAll('\\', '/')).sort()) {
+      const groups = regex.exec(path)?.groups;
+      if (groups?.locale === undefined || groups.namespace === undefined || claimed.has(groups.namespace)) continue;
+      const owner: { rule: FileRule; path: string } | undefined = owners.get(groups.namespace);
+      if (owner === undefined) owners.set(groups.namespace, { rule, path });
+      else if (owner.rule !== rule) {
+        throw new CliError(
+          EXIT.failed,
+          `${owner.path} and ${path} both hold Symfony domain ${groups.namespace}: keep one of them (legacy or +intl-icu), then pull again.`,
+        );
+      }
+    }
+  }
+
+  return owners;
+};
+
 /** A Windows checkout (autocrlf, BOM) must not count as drift. */
 const normalizeEol = (text: string): string => text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
 
@@ -153,17 +183,36 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
   // Phase 1 plans every write; nothing touches disk until every request and check has passed.
   const plan: Array<{ path: string; absolute: string; content: string }> = [];
   const seen: Map<string, string> = new Map<string, string>();
-  const context: PathContext = await pathContext(deps.config, deps.api);
 
   // Namespaces a fixed-namespace rule owns must not also be written by a `{namespace}` rule.
   const claimed: Set<string> = new Set(
     deps.config.files.flatMap((rule) => (rule.namespace === undefined ? [] : [rule.namespace])),
   );
 
-  for (const rule of deps.config.files) {
+  // Checked before any request: two Symfony files for one domain would refuse the next push anyway.
+  const symfonyRules: FileRule[] = deps.config.files.filter(isSymfonyWildcard);
+  const owners: Map<string, { rule: FileRule; path: string }> = await symfonyOwners(symfonyRules, claimed, deps.cwd);
+  const ownerOf = (namespace: string): FileRule | undefined => owners.get(namespace)?.rule ?? symfonyRules[0];
+  /** The ICU rule asks for every namespace first (its pre-check is the lenient one); the legacy rules then ask only for theirs. */
+  const lead: FileRule | undefined = symfonyRules.find((rule) => rule.yamlDialect === 'symfony-icu');
+  /** Every namespace the server has, from the lead's response; unknown until it ran (or when there is no lead). */
+  let allNamespaces: string[] | undefined;
+
+  const context: PathContext = await pathContext(deps.config, deps.api);
+
+  const rules: FileRule[] = lead === undefined ? deps.config.files : [lead, ...deps.config.files.filter((rule) => rule !== lead)];
+  for (const rule of rules) {
     if (opts.namespace !== undefined && rule.namespace !== undefined && rule.namespace !== opts.namespace) continue;
     const wildcard: boolean = rule.namespace === undefined;
     if (wildcard && opts.namespace !== undefined && claimed.has(opts.namespace)) continue;
+    const symfonyWildcard: boolean = symfonyRules.includes(rule);
+    if (symfonyWildcard && opts.namespace !== undefined && ownerOf(opts.namespace) !== rule) continue;
+    /** A non-lead Symfony rule behind a lead asks for exactly the namespaces it owns. */
+    let owned: string[] | undefined;
+    if (symfonyWildcard && lead !== undefined && rule !== lead && opts.namespace === undefined) {
+      owned = (allNamespaces ?? []).filter((namespace) => ownerOf(namespace) === rule);
+      if (owned.length === 0) continue;
+    }
 
     const base: Record<string, string> = { format: rule.format };
     if (rule.format === 'json' && rule.jsonStyle !== undefined) base.jsonStyle = rule.jsonStyle;
@@ -173,7 +222,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     let variants: Array<{ extra: Record<string, string>; accept: (locale: string) => boolean }> = [{ extra: {}, accept: () => true }];
     if (rule.format === 'yaml' && rule.yamlDialect !== undefined) {
       base.dialect = rule.yamlDialect;
-      if (rule.yamlDialect !== 'rails' && rule.jsonStyle !== undefined) base.jsonStyle = rule.jsonStyle;
+      if (isSymfonyDialect(rule.yamlDialect) && rule.jsonStyle !== undefined) base.jsonStyle = rule.jsonStyle;
     }
     if (rule.format === 'yaml' && rule.yamlDialect === 'rails') {
       // The file's locale key follows the disk name (en_US), the server only knows Translify codes.
@@ -205,6 +254,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     if (opts.locale !== undefined) base.locales = toTranslifyLocale(opts.locale, deps.config);
     const namespace: string | undefined = rule.namespace ?? opts.namespace;
     if (namespace !== undefined) base.namespaces = namespace;
+    else if (owned !== undefined) base.namespaces = owned.join(',');
 
     // A split pull reports one merged response per rule: only the files its request was trusted for, each warning once.
     const merged: PullResponse = { files: [], warnings: [] };
@@ -216,6 +266,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
         }
         throw error;
       });
+      if (rule === lead && opts.namespace === undefined) allNamespaces = [...new Set(res.files.map((file) => file.namespace))];
       if (variants.length === 1) responses.push(res);
       else merged.files.push(...res.files.filter((file) => variant.accept(file.locale)));
       for (const warning of res.warnings) {
@@ -233,6 +284,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
       for (const file of res.files) {
         if (!variant.accept(file.locale)) continue;
         if (wildcard && claimed.has(file.namespace)) continue;
+        if (symfonyWildcard && ownerOf(file.namespace) !== rule) continue;
 
         const path: string = pathFor(rule, file.locale, file.namespace, deps.config, context);
         const absolute: string = resolve(deps.cwd, path);

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -657,5 +657,116 @@ describe('runPull format yaml, Symfony dialects', () => {
     expect(failure.exitCode).toBe(6);
     expect(failure.message).toMatch(/Pull refused: 1 translation\(s\) cannot be written as Symfony YAML/);
     expect(failure.message).toMatch(/no literal "\|"/);
+  });
+});
+
+describe('runPull, two wildcard Symfony rules', () => {
+  const legacyRule = { pattern: 'translations/{namespace}.{locale}.yaml', format: 'yaml', yamlDialect: 'symfony', jsonStyle: 'flat' } as const;
+  const icuRule = { pattern: 'translations/{namespace}+intl-icu.{locale}.yaml', format: 'yaml', yamlDialect: 'symfony-icu', jsonStyle: 'flat' } as const;
+  const twoRules: Config = { apiUrl: 'https://x/api', files: [legacyRule, icuRule], locales: {} };
+
+  /** The server: every namespace for every locale, or only `namespaces` when asked. */
+  const server = (namespaces: string[]) => ({
+    get: vi.fn(async (_path: string, query: Record<string, string>) => ({
+      files: namespaces
+        .filter((ns) => query.namespaces === undefined || query.namespaces.split(',').includes(ns))
+        .flatMap((ns) => ['en', 'it'].map((locale) => ({ locale, namespace: ns, format: 'yaml', content: `${query.dialect}: ${ns}\n` }))),
+      warnings: [],
+    })),
+  });
+
+  const seed = async (cwd: string, files: string[]): Promise<void> => {
+    await mkdir(join(cwd, 'translations'), { recursive: true });
+    for (const file of files) await writeFile(join(cwd, 'translations', file), 'old: x\n');
+  };
+
+  const listing = async (cwd: string): Promise<string[]> => (await readdir(join(cwd, 'translations'))).sort();
+
+  it('asks the ICU rule for everything, the legacy rule for its own domains, and writes each domain once', async () => {
+    const cwd = await tmp();
+    await seed(cwd, ['messages+intl-icu.en.yaml', 'validators.en.yaml']);
+    const client = server(['messages', 'validators']);
+
+    await runPull({}, { cwd, config: twoRules, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledTimes(2);
+    expect(client.get).toHaveBeenNthCalledWith(1, '/cli/v1/pull', { format: 'yaml', dialect: 'symfony-icu', jsonStyle: 'flat' });
+    expect(client.get).toHaveBeenNthCalledWith(2, '/cli/v1/pull', { format: 'yaml', dialect: 'symfony', jsonStyle: 'flat', namespaces: 'validators' });
+    expect(await listing(cwd)).toEqual(['messages+intl-icu.en.yaml', 'messages+intl-icu.it.yaml', 'validators.en.yaml', 'validators.it.yaml']);
+    expect(await readFile(join(cwd, 'translations/messages+intl-icu.it.yaml'), 'utf8')).toBe('symfony-icu: messages\n');
+    expect(await readFile(join(cwd, 'translations/validators.it.yaml'), 'utf8')).toBe('symfony: validators\n');
+  });
+
+  it('gives a domain with no file on disk to the first Symfony rule in files', async () => {
+    const cwd = await tmp();
+    await seed(cwd, ['messages+intl-icu.en.yaml']);
+    const client = server(['messages', 'security']);
+
+    await runPull({}, { cwd, config: twoRules, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenNthCalledWith(2, '/cli/v1/pull', { format: 'yaml', dialect: 'symfony', jsonStyle: 'flat', namespaces: 'security' });
+    expect(await listing(cwd)).toEqual(['messages+intl-icu.en.yaml', 'messages+intl-icu.it.yaml', 'security.en.yaml', 'security.it.yaml']);
+
+    // ICU rule first in files: the new domain is its, and the legacy rule has nothing to ask for.
+    const icuFirst = await tmp();
+    await seed(icuFirst, ['messages+intl-icu.en.yaml']);
+    const other = server(['messages', 'security']);
+    await runPull({}, { cwd: icuFirst, config: { ...twoRules, files: [icuRule, legacyRule] }, api: other as never, out: quiet });
+
+    expect(other.get).toHaveBeenCalledTimes(1);
+    expect(await listing(icuFirst)).toEqual(['messages+intl-icu.en.yaml', 'messages+intl-icu.it.yaml', 'security+intl-icu.en.yaml', 'security+intl-icu.it.yaml']);
+  });
+
+  it('refuses a domain on disk under both rules, naming both files, before any request', async () => {
+    const cwd = await tmp();
+    await seed(cwd, ['messages.en.yaml', 'messages+intl-icu.it.yaml']);
+    const client = server(['messages']);
+
+    const failure = (await runPull({}, { cwd, config: twoRules, api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
+
+    expect(failure).toBeInstanceOf(CliError);
+    expect(failure.exitCode).toBe(1);
+    expect(failure.message).toContain('translations/messages.en.yaml');
+    expect(failure.message).toContain('translations/messages+intl-icu.it.yaml');
+    expect(client.get).not.toHaveBeenCalled();
+  });
+
+  it('--namespace asks only the rule that owns it', async () => {
+    const cwd = await tmp();
+    await seed(cwd, ['messages+intl-icu.en.yaml', 'validators.en.yaml']);
+    const client = server(['messages', 'validators']);
+
+    await runPull({ namespace: 'validators' }, { cwd, config: twoRules, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledTimes(1);
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'yaml', dialect: 'symfony', jsonStyle: 'flat', namespaces: 'validators' });
+    expect(await listing(cwd)).toEqual(['messages+intl-icu.en.yaml', 'validators.en.yaml', 'validators.it.yaml']);
+  });
+
+  it('a single legacy wildcard rule asks without namespaces and writes every namespace', async () => {
+    const cwd = await tmp();
+    await seed(cwd, ['messages.en.yaml']);
+    const client = server(['messages', 'validators']);
+
+    await runPull({}, { cwd, config: { ...twoRules, files: [legacyRule] }, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledTimes(1);
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'yaml', dialect: 'symfony', jsonStyle: 'flat' });
+    expect(await listing(cwd)).toEqual(['messages.en.yaml', 'messages.it.yaml', 'validators.en.yaml', 'validators.it.yaml']);
+  });
+
+  it('without an ICU rule, two legacy rules ask for everything and write by ownership', async () => {
+    const cwd = await tmp();
+    await mkdir(join(cwd, 'app/translations'), { recursive: true });
+    await writeFile(join(cwd, 'app/translations/validators.en.yaml'), 'old: x\n');
+    const second = { ...legacyRule, pattern: 'app/translations/{namespace}.{locale}.yaml' };
+    const client = server(['messages', 'validators']);
+
+    await runPull({}, { cwd, config: { ...twoRules, files: [legacyRule, second] }, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledTimes(2);
+    for (const call of client.get.mock.calls) expect(call[1].namespaces).toBeUndefined();
+    expect(await listing(cwd)).toEqual(['messages.en.yaml', 'messages.it.yaml']);
+    expect((await readdir(join(cwd, 'app/translations'))).sort()).toEqual(['validators.en.yaml', 'validators.it.yaml']);
   });
 });
