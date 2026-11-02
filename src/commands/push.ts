@@ -103,7 +103,7 @@ const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, prune:
         ...(match.rule.format === 'yaml' && match.rule.yamlDialect !== undefined
           ? {
               dialect: match.rule.yamlDialect,
-              ...(match.diskLocale !== undefined ? { fileLocale: match.diskLocale } : {}),
+              ...(match.rule.yamlDialect === 'rails' && match.diskLocale !== undefined ? { fileLocale: match.diskLocale } : {}),
             }
           : {}),
       })),

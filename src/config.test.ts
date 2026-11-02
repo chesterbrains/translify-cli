@@ -198,12 +198,28 @@ describe('loadConfig format yaml', () => {
     const wildcard = await yaml({ yamlDialect: 'rails', namespace: undefined }, 'config/locales/{namespace}.{locale}.yml');
     await expect(loadConfig(wildcard)).rejects.toThrow(/files\.0\.namespace Rails YAML files need a fixed namespace/);
     const both = await yaml({ yamlDialect: 'rails' }, 'config/locales/{namespace}.{locale}.yml');
-    await expect(loadConfig(both)).rejects.toThrow(/files\.0\.pattern \{namespace\} does not apply to format "yaml"/);
+    await expect(loadConfig(both)).rejects.toThrow(/files\.0\.pattern \{namespace\} does not apply to yamlDialect "rails"/);
   });
 
   it('refuses jsonStyle and xliffDialect on yaml, and a rule without {namespace} or namespace', async () => {
     await expect(loadConfig(await yaml({ yamlDialect: 'rails', jsonStyle: 'flat' }))).rejects.toThrow(/files\.0\.jsonStyle/);
     await expect(loadConfig(await yaml({ yamlDialect: 'rails', xliffDialect: 'angular' }))).rejects.toThrow(/files\.0\.xliffDialect/);
     await expect(loadConfig(await yaml({ yamlDialect: 'rails', namespace: undefined }))).rejects.toThrow(/files\.0\.namespace/);
+  });
+
+  it('accepts the Symfony dialects with {namespace} and defaults jsonStyle to flat', async () => {
+    const plain = await yaml({ yamlDialect: 'symfony', namespace: undefined }, 'translations/{namespace}.{locale}.yaml');
+    expect((await loadConfig(plain)).files[0]).toMatchObject({ yamlDialect: 'symfony', jsonStyle: 'flat' });
+    const icu = await yaml({ yamlDialect: 'symfony-icu', namespace: undefined, jsonStyle: 'nested' }, 'translations/{namespace}+intl-icu.{locale}.yaml');
+    expect((await loadConfig(icu)).files[0]).toMatchObject({ yamlDialect: 'symfony-icu', jsonStyle: 'nested' });
+  });
+
+  it('refuses a Symfony rule with neither {namespace} nor namespace, and jsonStyle on rails', async () => {
+    await expect(loadConfig(await yaml({ yamlDialect: 'symfony', namespace: undefined }, 'translations/messages.{locale}.yaml'))).rejects.toThrow(
+      /files\.0\.namespace needed when the pattern has no \{namespace\}/,
+    );
+    await expect(loadConfig(await yaml({ yamlDialect: 'rails', jsonStyle: 'flat' }))).rejects.toThrow(
+      /files\.0\.jsonStyle only applies to format "json" or a Symfony yamlDialect/,
+    );
   });
 });

@@ -150,4 +150,23 @@ describe('README', () => {
     expect(readme).not.toContain('a `%` before an argument');
     expect(readme).not.toContain('percentBeforeArg');
   });
+
+  it('documents the Symfony rules, layouts, plural grammar and the namespace workaround', () => {
+    const symfony: string = section('Symfony (YAML)');
+    for (const needle of [
+      '"yamlDialect": "symfony"',
+      '"yamlDialect": "symfony-icu"',
+      '+intl-icu',
+      '"jsonStyle": "flat"',
+      '%count%',
+      ']1,Inf[',
+      'literalPipe',
+      'unsupportedPlural',
+      'nonStringLeaf',
+      'easy-admin-bundle',
+      'first Symfony rule',
+    ]) {
+      expect(symfony, needle).toContain(needle);
+    }
+  });
 });

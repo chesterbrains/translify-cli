@@ -440,6 +440,122 @@ plurals, a plural not on `count`, number formats without a `%{}` equivalent (e.g
 the prefix of another (`a` and `a.b`), a list with a gap in the default locale (`arrayGap`), a stored raw value that does not parse as its kind (`invalidRaw`), and keys created
 elsewhere whose placeholders are printf or i18next rather than ICU. In a target locale a list with some but not all items translated is also `arrayGap`, on each empty item (all empty: the list is left out).
 
+## Symfony (YAML)
+
+Symfony keeps translations in `translations/`, one file per domain and locale. Set `format: "yaml"` and a Symfony
+`yamlDialect` on the rule; the domain is the Translify namespace, so the rule uses `{namespace}`. Two file styles exist and
+each has its own dialect:
+
+- `translations/<domain>.<locale>.yaml` is the legacy style: placeholders are `%name%` and plurals use the pipe form
+  (`one|other`). Use `"yamlDialect": "symfony"`.
+- `translations/<domain>+intl-icu.<locale>.yaml` holds ICU messages that Symfony's `+intl-icu` loader reads verbatim. Use
+  `"yamlDialect": "symfony-icu"`.
+
+```json
+{
+  "files": [
+    { "pattern": "translations/{namespace}.{locale}.yaml", "format": "yaml", "yamlDialect": "symfony", "jsonStyle": "flat" },
+    { "pattern": "translations/{namespace}+intl-icu.{locale}.yaml", "format": "yaml", "yamlDialect": "symfony-icu" }
+  ]
+}
+```
+
+One namespace has one file per locale, and one style: a domain cannot be both legacy and ICU in the same project.
+`.yml` is accepted as well as `.yaml` (write the extension you use in the pattern). Keys may only use `[A-Za-z0-9._-]`.
+
+With both rules, the file on disk decides which rule a domain belongs to, in any locale: `messages+intl-icu.en.yaml` makes
+`messages` an ICU domain, and pull writes it only in that style. A domain with no file yet (new in Translify) goes to the
+first Symfony rule in `files`. A domain on disk in both styles is an error that names both files, raised before any
+request; it is the same case the `init` note warns about.
+
+`jsonStyle` picks the layout and defaults to `flat` for the Symfony dialects: `flat` is what `translation:extract` writes
+(`home.title: …` at the top level), `nested` is what `--as-tree` writes at full depth (`home:` with `title:` below it).
+Set the one your project uses; pull then writes it and push reads either.
+
+`translify init` looks in `translations/` of a Symfony app (a `composer.json` or `symfony.lock` beside it) at the repo root
+or up to two folders below it, and writes a `symfony` rule for the legacy files and a `symfony-icu` rule for the `+intl-icu`
+files. Two cases end in a note instead of a rule:
+
+- A domain that has both styles (`messages.en.yaml` and `messages+intl-icu.en.yaml`): the ICU rule is written and the
+  note tells you to move the legacy messages into the ICU file or change the rule.
+- A domain outside the namespace grammar (lowercase letters, digits and `-`), such as `EasyAdminBundle.en.yaml`: the
+  note proposes a rule with a fixed namespace, which you add by hand:
+
+```json
+{ "pattern": "translations/EasyAdminBundle.{locale}.yaml", "format": "yaml", "yamlDialect": "symfony", "namespace": "easy-admin-bundle" }
+```
+
+Workflow:
+
+1. `translify push` sends the default-locale files and any other locale file you already have.
+2. Translate in Translify.
+3. `translify pull` writes the other locale files. Symfony falls back to the default locale for a missing key, so
+   untranslated keys are left out.
+
+What `pull` writes in the legacy style (the ICU style writes the stored ICU text as it is):
+
+| Translify value | Written |
+|---|---|
+| `Hello, {name}` | `key: Hello, %name%` |
+| `Total: {amount, number}` | `key: 'Total: %amount%'` |
+| `{count, plural, one {# item} other {# items}}` | `key: '%count% item|%count% items'` |
+| `{count, plural, =0 {None} one {# item} other {# items}}` | `key: '{0} None|%count% item|%count% items'` |
+| `%user.name%` or `%%` in the text | written as they are, literal text |
+| `home.title` | flat: `home.title: …`; nested: `home:` with `title:` below it |
+| a description | `# …` on the line directly above the key, in the default-locale file only |
+
+Plural segments are positional, one per Symfony slot of the locale: English and French have two (`one`, `other`), Russian
+three (`one`, `few`, `many`), Japanese, Chinese and Turkish one. Exact branches come first (`=0` is `{0} …`, `=1` is
+`{1} …`) and `#` is `%count%`. Categories Symfony cannot select are dropped on pull: `other` on Russian, Ukrainian,
+Belarusian and Polish, `two` on Hebrew, `one` on Turkish. A plural whose source has an `=1` branch writes `other`'s text
+into the `one` slot when the source has no `one` category (the idiomatic `{1}` form), so
+`{0} None|{1} One|]1,Inf[ %count% items` comes back as `{0} None|{1} One|%count% items|%count% items`.
+
+Output is byte-identical to Symfony's `Yaml::dump`: 4-space indent, no line folding, single or double quotes as
+symfony/yaml chooses, `{  }` for a namespace with no keys, a trailing newline. Keys are sorted bytewise at every level, and,
+in the `nested` layout, a level below the top level whose keys are exactly `0` to `n-1` is written as a sequence. Symfony
+itself keeps catalogue order, and `translation:extract --sort=asc` uses PHP's `ksort`; neither is emulated, so
+`translation:extract` can reorder a pulled file.
+`translation:extract --force` also rewrites files without comments, so descriptions live in Translify once pushed.
+
+The first `pull` normalizes the files once (quoting, sorting, and the repeated `one` slot above); commit them before
+relying on `status` in CI. After that a pull rewrites nothing that did not change, and a pulled file pushed back
+unchanged is `0 updated`, with no revision and no demotion, keys created elsewhere included.
+
+What `push` reads as a plural: a value with at least one `|` that is not part of `||` (`||` is a literal pipe); then a
+segment starting with an interval (`{0}`, `[2,Inf]`, `]1,Inf[`) or `%count%` anywhere makes it a plural.
+`Login | Register` stays text. Inside a plural:
+
+- `{n}` becomes an exact branch.
+- An interval that is unbounded above and includes every integer from 2 (`]1,Inf[`, `[2,Inf]`, `]0,Inf[`, `[0,Inf[`)
+  becomes `other`.
+- Any other interval, a set, a second range, or an `{n}` written after a range that already covers `n` is the row error
+  `unsupportedPlural`.
+- Positional segments must match the locale's slot count. A `word:` label on a positional segment is dropped, as Symfony
+  drops it. A segment whose own text starts with `word:` or an interval is written unchanged on pull and misread on push,
+  the same as Symfony's runtime does.
+- Under a key whose source is a plural, a target with no pipe (`りんご`) is stored as a one-branch plural, and
+  `item|items` is read positionally.
+
+Other push rules: `%name%` becomes `{name}`, other text is ICU-escaped, and keys from a Symfony file are always ICU, so
+`100%d off` is text, never printf. `null`, `~`, empty and `''` values are skipped with one warning per file (`N empty
+value(s) in <locale>/<namespace> skipped; Symfony will fall back to the default locale`). Numbers, booleans and dates
+(anything symfony/yaml would type: `10`, `true`, `2026-01-01`) are the row error `nonStringLeaf`: quote them. `!!str` is read; any other tag
+(`!php/const`) is `unsupportedElement`. A value written as a bare `-` or `- a` fails the file (`File is not valid YAML
+(line N)`) even though Symfony reads it as text: quote it. Comments directly above a key in the default-locale file become
+its description. Other row errors: `invalidKey` (sentence ids such as `'Welcome to our site'` are refused), `duplicateKey` (a
+dotted key next to the same nested path), `invalidIcu` (ICU dialect).
+
+Not supported in this version (the pull is refused with `YAML_UNSUPPORTED`, exit 6, the output lists the cells and why):
+for the legacy dialect, a text with a bare `|` that push would read back as a plural, because it holds `%count%` or an
+interval-looking segment (`literalPipe`; use the ICU dialect or reword), plus `select`, `offset`, text around a plural, two
+or nested plurals, a plural not on `count`, formatted arguments other than `number`, an argument name outside
+`[A-Za-z0-9_]`, a target whose shape differs from the source, invalid ICU (`invalidIcu`), and keys created elsewhere whose
+placeholders are printf or i18next. The ICU dialect refuses only keys that are not ICU and invalid ICU.
+
+Not supported by the rule shape: a domain outside the namespace grammar needs a fixed `namespace` (see `init` above), and
+a domain cannot be both legacy and ICU in one project.
+
 ## `translify.json` reference
 
 `translify.json` lives in the repository root; every command reads it from the current directory. The
@@ -451,13 +567,13 @@ fields are refused, and so is any field whose name contains `key`, `secret` or `
 | `$schema` | string | no | Schema URL for editor support. Ignored by the CLI. |
 | `apiUrl` | URL | yes | The Translify API base, ending in `/api`, e.g. `https://translify.tommasofeltrin.work/api`. |
 | `files` | array | yes | One rule per kind of translation file. Each rule has the fields below. |
-| `files[].pattern` | string | yes | Path relative to `translify.json`, with `/` separators. Must contain `{locale}` once and may contain `{namespace}` once (not for `strings`/`stringsdict`/`yaml`), e.g. `locales/{locale}/{namespace}.json`. |
-| `files[].format` | `json` \| `xliff` \| `arb` \| `android` \| `strings` \| `stringsdict` \| `yaml` | yes | File format: i18next JSON, XLIFF, Flutter ARB, Android `strings.xml` ([Android (strings.xml)](#android-stringsxml)), iOS `.strings` / `.stringsdict` ([iOS (.strings / .stringsdict)](#ios-strings--stringsdict)) or Rails YAML ([Rails (YAML)](#rails-yaml)). |
-| `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb`, `android`, `strings`, `stringsdict` and `yaml` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
-| `files[].jsonStyle` | `nested` \| `flat` | no | Only for `json`. `nested` (the default) writes `{ "a": { "b": "…" } }`, `flat` writes `{ "a.b": "…" }`. |
+| `files[].pattern` | string | yes | Path relative to `translify.json`, with `/` separators. Must contain `{locale}` once and may contain `{namespace}` once (not for `strings`, `stringsdict` or `yaml` with `rails`), e.g. `locales/{locale}/{namespace}.json`. |
+| `files[].format` | `json` \| `xliff` \| `arb` \| `android` \| `strings` \| `stringsdict` \| `yaml` | yes | File format: i18next JSON, XLIFF, Flutter ARB, Android `strings.xml` ([Android (strings.xml)](#android-stringsxml)), iOS `.strings` / `.stringsdict` ([iOS (.strings / .stringsdict)](#ios-strings--stringsdict)) Rails YAML ([Rails (YAML)](#rails-yaml)) or Symfony YAML ([Symfony (YAML)](#symfony-yaml)). |
+| `files[].namespace` | string | when the pattern has no `{namespace}`, and always for `arb`, `android`, `strings`, `stringsdict` and `yaml` with `rails` | Fixed namespace for every file the rule matches. Lowercase kebab-case, at most 64 characters. |
+| `files[].jsonStyle` | `nested` \| `flat` | no | Only for `json` and for `yaml` with a Symfony dialect. For `json`, `nested` (the default) writes `{ "a": { "b": "…" } }`, `flat` writes `{ "a.b": "…" }`. For Symfony YAML the default is `flat` (what `translation:extract` writes) and `nested` is `--as-tree` ([Symfony (YAML)](#symfony-yaml)). |
 | `files[].xliffDialect` | `angular` \| `xcode` | no | Only for `xliff`. `angular` writes `@angular/localize` placeholders on pull and reads `ng extract-i18n` output on push ([Angular (XLIFF)](#angular-xliff)); `xcode` writes XLIFF 1.2 for String Catalogs and reads `xcodebuild -exportLocalizations` output ([Xcode (XLIFF)](#xcode-xliff)). |
 | `files[].xliffOriginal` | string | with `xliffDialect: "xcode"` | The String Catalog path Xcode knows, e.g. `Sources/App/Localizable.xcstrings`; written to `<file original>`. Xcode imports nothing when it does not match the project. Only with `xcode`. |
-| `files[].yamlDialect` | `rails` | with `format: "yaml"` | Required with `yaml`, refused otherwise. `rails` reads and writes Rails i18n YAML, normalized like `i18n-tasks normalize` ([Rails (YAML)](#rails-yaml)). |
+| `files[].yamlDialect` | `rails` \| `symfony` \| `symfony-icu` | with `format: "yaml"` | Required with `yaml`, refused otherwise. `rails`: Rails i18n YAML, normalized like `i18n-tasks normalize` ([Rails (YAML)](#rails-yaml)). `symfony`: legacy `<domain>.<locale>.yaml` with `%name%` and pipe plurals ([Symfony (YAML)](#symfony-yaml)). `symfony-icu`: `<domain>+intl-icu.<locale>.yaml`, ICU verbatim ([Symfony (YAML)](#symfony-yaml)). |
 | `locales` | object | no | Maps a locale name on disk to a Translify locale code, e.g. `{ "en_US": "en-US" }`. Unmapped names pass through unchanged. Two names may not map to the same code, and a target may not itself be a mapped name. The map renames files only: an XLIFF's `trgLang` (2.0) or `target-language` (1.2), when present, must be the Translify code itself, or `push` is refused with `File targets it but it-IT was requested`. |
 
 Each file must be matched by one rule only, and each (locale, namespace) pair must come from one file only;
@@ -467,7 +583,7 @@ otherwise the CLI stops before sending anything and names the files involved.
 
 | Command | What it does |
 |---|---|
-| `translify init` | Create `translify.json`: detects i18next, Flutter, Angular, Xcode, Android and Rails layouts, asks for your key (interactive, or `--yes`) |
+| `translify init` | Create `translify.json`: detects i18next, Flutter, Angular, Xcode, Android, Rails and Symfony layouts, asks for your key (interactive, or `--yes`) |
 | `translify login` | Store a secret key on this machine (interactive) |
 | `translify push` | Upload source and target files |
 | `translify pull` | Download translation files |
@@ -687,7 +803,7 @@ project when a rule uses `{namespace}`. It needs a key with the `pull` scope.
 | 3 | Plan quota exceeded |
 | 4 | Network failure, server error, push too large, CLI too old, transaction conflict, or rate limited after 3 retries |
 | 5 | `publish --fail-on-withheld`: the publish went through, but the review gate withheld some translations |
-| 6 | Placeholder errors: `lint` found them (or more warnings than `--max-warnings`), `publish` refused because translations with errors would go live, or `pull` refused an Angular/Xcode XLIFF, Android, iOS or Rails YAML rule |
+| 6 | Placeholder errors: `lint` found them (or more warnings than `--max-warnings`), `publish` refused because translations with errors would go live, or `pull` refused an Angular/Xcode XLIFF, Android, iOS, Rails YAML or Symfony YAML rule |
 
 The server's error `code` decides the exit code first; the HTTP status is only used for codes the CLI does not know.
 
@@ -718,7 +834,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `XLIFF_DIALECT_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written in the rule's XLIFF dialect (Angular: text beside a plural, nested plurals, number/date formats; Xcode: `select`, `=0`/`offset`, a translation of a different shape; both: printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Angular (XLIFF)](#angular-xliff) and [Xcode (XLIFF)](#xcode-xliff). |
 | `ANDROID_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Android `strings.xml` (`select`, `=0`/`offset`, text around a plural, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys, a key with `-` or a leading digit, a gapped array). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [Android (strings.xml)](#android-stringsxml). |
 | `STRINGS_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as iOS `.strings` / `.stringsdict` (`select`, exact matches other than `=0`, `offset`, two or nested plurals, an unknown number format, a translation of a different shape, printf/i18next keys). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule. See [iOS (.strings / .stringsdict)](#ios-strings--stringsdict). |
-| `YAML_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Rails YAML (`select`, exact matches other than `=0`, `offset`, text around a plural, two or nested plurals, a plural not on `count`, an unknown number format, an argument name outside `[A-Za-z0-9_]`, a translation of a different shape, a key that prefixes another, a gapped or partly translated list, an unparsable raw value (`invalidRaw`), printf/i18next keys created elsewhere). Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule; the closing hint depends on the reasons (a list gap: translate every item or clear them all; `invalidRaw`: fix the value to the source's kind; `keyConflict`: rename one of the keys). See [Rails (YAML)](#rails-yaml). |
+| `YAML_UNSUPPORTED` | 6 | `pull` refused: a translation cannot be written as Rails or Symfony YAML. Rails: `select`, exact matches other than `=0`, `offset`, text around a plural, two or nested plurals, a plural not on `count`, an unknown number format, an argument name outside `[A-Za-z0-9_]`, a translation of a different shape, a key that prefixes another (`keyConflict`), a gapped or partly translated list (`arrayGap`), an unparsable raw value (`invalidRaw`), printf/i18next keys created elsewhere. Symfony (legacy dialect): a bare `\|` that push would read back as a plural (`literalPipe`), `select`, `offset`, text around a plural, two or nested plurals, a plural not on `count`, formatted arguments other than `number`, an argument name outside `[A-Za-z0-9_]`, a target whose shape differs from the source, printf/i18next keys created elsewhere, invalid ICU (`invalidIcu`); any `{n}` exact match is accepted, and there is no `keyConflict`, `invalidRaw` or `arrayGap`. Symfony ICU dialect: only non-ICU keys and `invalidIcu`. Nothing was written; the output lists the cells and why. Split the text, or move the key to a JSON rule; the closing hint depends on the reasons (a list gap: translate every item or clear them all; `invalidRaw`: fix the value to the source's kind; `keyConflict`: rename one of the keys; `literalPipe`: use the `symfony-icu` dialect or reword the text). See [Rails (YAML)](#rails-yaml) and [Symfony (YAML)](#symfony-yaml). |
 | `TRANSACTION_CONFLICT` | 4 | Another write collided with yours. Retry. |
 | `RATE_LIMITED` | 4 | The CLI already retried 3 times, honouring `Retry-After`. Wait a moment and retry. |
 | `INTERNAL_ERROR` / `DATABASE_ERROR` / 5xx | 4 | A server problem. Retry shortly; if it persists, re-run with `--debug` and report it. |

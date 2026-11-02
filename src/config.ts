@@ -8,6 +8,9 @@ import { CliError, EXIT } from './errors.js';
 const NAMESPACE = /^[a-z0-9-]+$/;
 const LOCALE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
 
+/** The two Symfony YAML dialects: legacy `%name%` + pipe plurals, and `+intl-icu` ICU verbatim. */
+export const isSymfonyDialect = (dialect: string | undefined): boolean => dialect === 'symfony' || dialect === 'symfony-icu';
+
 const fileRule = z
   .object({
     pattern: z
@@ -22,27 +25,32 @@ const fileRule = z
     jsonStyle: z.enum(['nested', 'flat']).optional(),
     xliffDialect: z.enum(['angular', 'xcode']).optional(),
     xliffOriginal: z.string().min(1).max(512).optional(),
-    yamlDialect: z.enum(['rails']).optional(),
+    yamlDialect: z.enum(['rails', 'symfony', 'symfony-icu']).optional(),
   })
   .strict()
   .superRefine((rule, ctx) => {
     const hasPlaceholder: boolean = rule.pattern.includes('{namespace}');
+    const rails: boolean = rule.format === 'yaml' && rule.yamlDialect === 'rails';
+    const symfony: boolean = rule.format === 'yaml' && isSymfonyDialect(rule.yamlDialect);
     if (rule.format === 'arb' && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'ARB files need a fixed namespace' });
     } else if (rule.format === 'android' && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'Android files need a fixed namespace' });
-    } else if (rule.format === 'yaml' && rule.namespace === undefined) {
+    } else if (rails && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'Rails YAML files need a fixed namespace' });
     } else if ((rule.format === 'strings' || rule.format === 'stringsdict') && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: '.strings files need a fixed namespace' });
     } else if (!hasPlaceholder && rule.namespace === undefined) {
       ctx.addIssue({ code: 'custom', path: ['namespace'], message: 'needed when the pattern has no {namespace}' });
     }
-    if (hasPlaceholder && (rule.format === 'strings' || rule.format === 'stringsdict' || rule.format === 'yaml')) {
+    if (hasPlaceholder && (rule.format === 'strings' || rule.format === 'stringsdict')) {
       ctx.addIssue({ code: 'custom', path: ['pattern'], message: `{namespace} does not apply to format "${rule.format}"` });
     }
-    if (rule.jsonStyle !== undefined && rule.format !== 'json') {
-      ctx.addIssue({ code: 'custom', path: ['jsonStyle'], message: 'only applies to format "json"' });
+    if (hasPlaceholder && rails) {
+      ctx.addIssue({ code: 'custom', path: ['pattern'], message: '{namespace} does not apply to yamlDialect "rails"' });
+    }
+    if (rule.jsonStyle !== undefined && rule.format !== 'json' && !symfony) {
+      ctx.addIssue({ code: 'custom', path: ['jsonStyle'], message: 'only applies to format "json" or a Symfony yamlDialect' });
     }
     if (rule.xliffDialect !== undefined && rule.format !== 'xliff') {
       ctx.addIssue({ code: 'custom', path: ['xliffDialect'], message: 'only applies to format "xliff"' });
@@ -60,7 +68,14 @@ const fileRule = z
       ctx.addIssue({ code: 'custom', path: ['xliffOriginal'], message: 'required with xliffDialect "xcode"' });
     }
   })
-  .transform((rule) => (rule.format === 'json' ? { ...rule, jsonStyle: rule.jsonStyle ?? 'nested' } : rule));
+  .transform((rule) => {
+    if (rule.format === 'json') return { ...rule, jsonStyle: rule.jsonStyle ?? 'nested' };
+    if (rule.format === 'yaml' && isSymfonyDialect(rule.yamlDialect)) {
+      return { ...rule, jsonStyle: rule.jsonStyle ?? 'flat' };
+    }
+
+    return rule;
+  });
 
 const configSchema = z
   .object({

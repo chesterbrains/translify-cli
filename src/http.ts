@@ -111,7 +111,7 @@ const describeBody = (status: number, body: ErrorBody): string => {
     case 'ANDROID_UNSUPPORTED':
       return `Pull refused: ${String(body.total)} translation(s) cannot be written as Android strings.xml. Nothing was written.`;
     case 'YAML_UNSUPPORTED':
-      return `Pull refused: ${String(body.total)} translation(s) cannot be written as Rails YAML. Nothing was written.`;
+      return `Pull refused: ${String(body.total)} translation(s) cannot be written as YAML. Nothing was written.`;
     case 'STRINGS_UNSUPPORTED':
       return `Pull refused: ${String(body.total)} translation(s) cannot be written as iOS .strings/.stringsdict. Nothing was written.`;
     case 'XLIFF_DIALECT_UNSUPPORTED':
