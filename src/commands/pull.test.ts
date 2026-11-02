@@ -622,3 +622,40 @@ describe('runPull format strings', () => {
     expect(failure.message).not.toContain('plural/select');
   });
 });
+
+describe('runPull format yaml, Symfony dialects', () => {
+  const symfony: Config = {
+    apiUrl: 'https://x/api',
+    files: [{ pattern: 'translations/{namespace}.{locale}.yaml', format: 'yaml', yamlDialect: 'symfony', jsonStyle: 'flat' }],
+    locales: { en_US: 'en-US' },
+  };
+
+  it('sends dialect and jsonStyle, no fileLocales or namespaces, and writes one file per namespace', async () => {
+    const cwd = await tmp();
+    const client = {
+      get: vi.fn(async () => ({
+        files: [
+          { locale: 'en-US', namespace: 'messages', format: 'yaml', content: 'a: b\n' },
+          { locale: 'en-US', namespace: 'validators', format: 'yaml', content: 'c: d\n' },
+        ],
+        warnings: [],
+      })),
+    };
+    await runPull({}, { cwd, config: symfony, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'yaml', dialect: 'symfony', jsonStyle: 'flat' });
+    expect(await readFile(join(cwd, 'translations/messages.en_US.yaml'), 'utf8')).toBe('a: b\n');
+    expect(await readFile(join(cwd, 'translations/validators.en_US.yaml'), 'utf8')).toBe('c: d\n');
+  });
+
+  it('names Symfony YAML in a refusal and hints at a literal pipe', async () => {
+    const body = { code: 'YAML_UNSUPPORTED', total: 1, cells: [{ namespace: 'messages', key: 'k', locale: 'en', reason: 'literalPipe' }] };
+    const client = { get: vi.fn(async () => { throw new CliError(6, 'x', body); }) };
+
+    const failure = (await runPull({}, { cwd: await tmp(), config: symfony, api: client as never, out: quiet }).catch((e: unknown) => e)) as CliError;
+
+    expect(failure.exitCode).toBe(6);
+    expect(failure.message).toMatch(/Pull refused: 1 translation\(s\) cannot be written as Symfony YAML/);
+    expect(failure.message).toMatch(/no literal "\|"/);
+  });
+});

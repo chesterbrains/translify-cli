@@ -456,4 +456,18 @@ describe('runPush format yaml', () => {
       { field: 'file1', path: 'config/locales/en_US.yml', format: 'yaml', locale: 'en-US', namespace: 'rails', dialect: 'rails', fileLocale: 'en_US' },
     ]);
   });
+
+  it('sends dialect only for Symfony, never fileLocale, even with an aliased locale', async () => {
+    const s = await setup(vi.fn().mockResolvedValue(response()));
+    await mkdir(join(s.cwd, 'translations'), { recursive: true });
+    await writeFile(join(s.cwd, 'translations/messages.en_US.yaml'), 'a: b\n');
+    s.deps.config.files = [{ pattern: 'translations/{namespace}.{locale}.yaml', format: 'yaml', yamlDialect: 'symfony', jsonStyle: 'flat' }];
+    s.deps.config.locales = { en_US: 'en-US' };
+
+    await runPush({}, s.deps);
+
+    expect(JSON.parse(String(formOf(s.post, 0).get('manifest')))).toEqual([
+      { field: 'file0', path: 'translations/messages.en_US.yaml', format: 'yaml', locale: 'en-US', namespace: 'messages', dialect: 'symfony' },
+    ]);
+  });
 });

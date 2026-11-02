@@ -26,16 +26,16 @@
             "type": "string",
             "pattern": "^[a-z0-9-]+$",
             "maxLength": 64,
-            "description": "Fixed namespace. Required when the pattern has no {namespace}, and always for arb, android, strings, stringsdict and yaml."
+            "description": "Fixed namespace. Required when the pattern has no {namespace}, and always for arb, android, strings, stringsdict and yaml with yamlDialect rails."
           },
-          "jsonStyle": { "enum": ["nested", "flat"], "description": "Only for format json. Defaults to nested." },
+          "jsonStyle": { "enum": ["nested", "flat"], "description": "Only for format json (defaults to nested) and format yaml with a Symfony yamlDialect (defaults to flat)." },
           "xliffDialect": {
             "enum": ["angular", "xcode"],
             "description": "Only for format xliff. angular writes @angular/localize placeholders (<ph equiv=\"INTERPOLATION\"/>, VAR_PLURAL) on pull and reads ng extract-i18n output on push. xcode writes XLIFF 1.2 for String Catalogs (positional printf, |==| plural and substitution units) and reads xcodebuild -exportLocalizations output."
           },
           "yamlDialect": {
-            "enum": ["rails"],
-            "description": "Only for format yaml, and required with it. rails writes Rails i18n YAML (the locale as the single top-level key, %{name} interpolation, plural category hashes) on pull and reads it on push."
+            "enum": ["rails", "symfony", "symfony-icu"],
+            "description": "Only for format yaml, and required with it. rails writes Rails i18n YAML (the locale as the single top-level key, %{name} interpolation, plural category hashes) on pull and reads it on push. symfony writes Symfony translation files (translations/<domain>.<locale>.yaml, %name% placeholders, pipe plurals); symfony-icu is for +intl-icu files, ICU kept verbatim. Symfony rules use {namespace} for the domain."
           },
           "xliffOriginal": {
             "type": "string",
@@ -46,7 +46,11 @@
         },
         "allOf": [
           {
-            "if": { "properties": { "format": { "enum": ["arb", "android", "strings", "stringsdict", "yaml"] } }, "required": ["format"] },
+            "if": { "properties": { "format": { "enum": ["arb", "android", "strings", "stringsdict"] } }, "required": ["format"] },
+            "then": { "required": ["namespace"] }
+          },
+          {
+            "if": { "properties": { "format": { "const": "yaml" }, "yamlDialect": { "const": "rails" } }, "required": ["format", "yamlDialect"] },
             "then": { "required": ["namespace"] }
           },
           {
@@ -54,11 +58,19 @@
             "then": { "required": ["namespace"] }
           },
           {
-            "if": { "properties": { "format": { "enum": ["strings", "stringsdict", "yaml"] } }, "required": ["format"] },
+            "if": { "properties": { "format": { "enum": ["strings", "stringsdict"] } }, "required": ["format"] },
             "then": { "properties": { "pattern": { "not": { "pattern": "\\{namespace\\}" } } } }
           },
           {
-            "if": { "properties": { "format": { "enum": ["xliff", "arb", "android", "strings", "stringsdict", "yaml"] } }, "required": ["format"] },
+            "if": { "properties": { "yamlDialect": { "const": "rails" } }, "required": ["yamlDialect"] },
+            "then": { "properties": { "pattern": { "not": { "pattern": "\\{namespace\\}" } } } }
+          },
+          {
+            "if": { "properties": { "format": { "enum": ["xliff", "arb", "android", "strings", "stringsdict"] } }, "required": ["format"] },
+            "then": { "not": { "required": ["jsonStyle"] } }
+          },
+          {
+            "if": { "properties": { "format": { "const": "yaml" }, "yamlDialect": { "const": "rails" } }, "required": ["format", "yamlDialect"] },
             "then": { "not": { "required": ["jsonStyle"] } }
           },
           {

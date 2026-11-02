@@ -77,6 +77,7 @@ const dialectHint = (code: DialectBody['code']): string =>
 const YAML_HINTS: Record<string, string> = {
   arrayGap: 'Translate every item of the list, or clear them all.',
   invalidRaw: 'Fix the value so it is the same kind as the source (true/false, a number, a :symbol list).',
+  literalPipe: 'Rephrase the text so it has no literal "|": Symfony reads it as a plural separator.',
   keyConflict: 'Rename one of the keys: YAML cannot nest below a key that has a value.',
 };
 const YAML_ICU_HINT: string = 'Rewrite each key as plain text with placeholders or one plural, or move the key to a JSON rule.';
@@ -101,7 +102,9 @@ const dialectRefusal = (body: DialectBody, config: Config, dialect: string = 'an
       : body.code === 'STRINGS_UNSUPPORTED'
         ? 'iOS .strings/.stringsdict'
         : body.code === 'YAML_UNSUPPORTED'
-          ? 'Rails YAML'
+          ? dialect === 'rails'
+            ? 'Rails YAML'
+            : 'Symfony YAML'
           : `XLIFF for ${dialect}`;
   const lines: string[] = [
     `Pull refused: ${body.total} translation(s) cannot be written as ${target}. Nothing was written.`,
@@ -170,6 +173,9 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     let variants: Array<{ extra: Record<string, string>; accept: (locale: string) => boolean }> = [{ extra: {}, accept: () => true }];
     if (rule.format === 'yaml' && rule.yamlDialect !== undefined) {
       base.dialect = rule.yamlDialect;
+      if (rule.yamlDialect !== 'rails' && rule.jsonStyle !== undefined) base.jsonStyle = rule.jsonStyle;
+    }
+    if (rule.format === 'yaml' && rule.yamlDialect === 'rails') {
       // The file's locale key follows the disk name (en_US), the server only knows Translify codes.
       const requested: string[] = opts.locale === undefined ? Object.values(deps.config.locales) : [toTranslifyLocale(opts.locale, deps.config)];
       // Only locales the project has can come back; an older server (no `locales` in whoami) keeps the whole map.
@@ -206,7 +212,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     for (const variant of variants) {
       const res: PullResponse = await deps.api.get<PullResponse>('/cli/v1/pull', { ...base, ...variant.extra }).catch((error: unknown) => {
         if (error instanceof CliError && isDialectUnsupported(error.details)) {
-          throw dialectRefusal(error.details, deps.config, rule.xliffDialect);
+          throw dialectRefusal(error.details, deps.config, rule.yamlDialect ?? rule.xliffDialect);
         }
         throw error;
       });
