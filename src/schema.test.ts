@@ -7,6 +7,7 @@ interface Condition {
   required?: string[];
 }
 interface Branch {
+  required?: string[];
   not?: { required?: string[] };
 }
 interface Rule {
@@ -32,12 +33,19 @@ const matches = (condition: Condition, value: Record<string, string>): boolean =
     return true;
   });
 
-const allowsJsonStyle = (value: Record<string, string>): boolean =>
-  rule.allOf.every((entry) => {
+/** The `then` / `else` branches of the allOf that apply to `value`. */
+const branches = (value: Record<string, string>): Branch[] =>
+  rule.allOf.flatMap((entry) => {
     const branch: Branch | undefined = matches(entry.if, value) ? entry.then : entry.else;
 
-    return !(branch?.not?.required ?? []).includes('jsonStyle');
+    return branch === undefined ? [] : [branch];
   });
+
+const allowsJsonStyle = (value: Record<string, string>): boolean =>
+  branches(value).every((branch) => !(branch.not?.required ?? []).includes('jsonStyle'));
+
+const requires = (value: Record<string, string>, name: string): boolean =>
+  branches(value).some((branch) => (branch.required ?? []).includes(name));
 
 describe('translify.schema.json', () => {
   it('lists the yaml dialects and json styles', () => {
@@ -53,5 +61,14 @@ describe('translify.schema.json', () => {
     expect(allowsJsonStyle({ ...base, format: 'yaml', yamlDialect: 'symfony-icu' })).toBe(true);
     expect(allowsJsonStyle({ ...base, format: 'yaml', yamlDialect: 'rails', namespace: 'app' })).toBe(false);
     expect(allowsJsonStyle({ ...base, format: 'xliff', namespace: 'web' })).toBe(false);
+  });
+
+  it('refuses yaml without a yamlDialect through the required dialect, not through jsonStyle', () => {
+    // The config parser refuses this rule too (yamlDialect required, and jsonStyle outside json / Symfony):
+    // both reject it, the schema reports only the missing dialect.
+    const dialectless = { pattern: 'translations/{namespace}.{locale}.yaml', format: 'yaml', jsonStyle: 'flat' };
+
+    expect(requires(dialectless, 'yamlDialect')).toBe(true);
+    expect(allowsJsonStyle(dialectless)).toBe(true);
   });
 });
