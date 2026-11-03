@@ -462,6 +462,16 @@ describe('runPull format yaml', () => {
     expect(await readFile(join(cwd, 'config/locales/en_US.yml'), 'utf8')).toBe('a: b\n');
   });
 
+  it('leaves the Rails pull request unchanged: format=yaml&dialect=rails, never jsonStyle', async () => {
+    const client = { get: vi.fn(async () => ({ files: [], warnings: [] })) };
+    const config: Config = rails();
+    // A stray jsonStyle (the schema refuses it on Rails) must not reach the query either.
+    config.files = [{ ...config.files[0]!, jsonStyle: 'flat' }];
+    await runPull({}, { cwd: await tmp(), config, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'yaml', dialect: 'rails', namespaces: 'rails' });
+  });
+
   it('omits fileLocales when no locale is aliased', async () => {
     const client = { get: vi.fn(async () => ({ files: [], warnings: [] })) };
     await runPull({}, { cwd: await tmp(), config: rails(), api: client as never, out: quiet });
