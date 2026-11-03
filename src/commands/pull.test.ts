@@ -462,6 +462,16 @@ describe('runPull format yaml', () => {
     expect(await readFile(join(cwd, 'config/locales/en_US.yml'), 'utf8')).toBe('a: b\n');
   });
 
+  it('leaves the Rails pull request unchanged: format=yaml&dialect=rails, never jsonStyle', async () => {
+    const client = { get: vi.fn(async () => ({ files: [], warnings: [] })) };
+    const config: Config = rails();
+    // A stray jsonStyle (the schema refuses it on Rails) must not reach the query either.
+    config.files = [{ ...config.files[0]!, jsonStyle: 'flat' }];
+    await runPull({}, { cwd: await tmp(), config, api: client as never, out: quiet });
+
+    expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'yaml', dialect: 'rails', namespaces: 'rails' });
+  });
+
   it('omits fileLocales when no locale is aliased', async () => {
     const client = { get: vi.fn(async () => ({ files: [], warnings: [] })) };
     await runPull({}, { cwd: await tmp(), config: rails(), api: client as never, out: quiet });
@@ -753,6 +763,59 @@ describe('runPull, two wildcard Symfony rules', () => {
     expect(client.get).toHaveBeenCalledTimes(1);
     expect(client.get).toHaveBeenCalledWith('/cli/v1/pull', { format: 'yaml', dialect: 'symfony', jsonStyle: 'flat' });
     expect(await listing(cwd)).toEqual(['messages.en.yaml', 'messages.it.yaml', 'validators.en.yaml', 'validators.it.yaml']);
+  });
+
+  it('keeps files order and moves the ICU rule only ahead of the other Symfony rules', async () => {
+    const jsonRule = { pattern: 'locales/{locale}/{namespace}.json', format: 'json', jsonStyle: 'flat' } as const;
+    const order = async (files: Config['files']): Promise<string[]> => {
+      const cwd = await tmp();
+      await seed(cwd, ['messages+intl-icu.en.yaml', 'validators.en.yaml']);
+      const client = server(['messages', 'validators']);
+      await runPull({}, { cwd, config: { ...twoRules, files }, api: client as never, out: quiet });
+
+      return client.get.mock.calls.map((call) => call[1].dialect ?? call[1].format);
+    };
+
+    expect(await order([jsonRule, icuRule, legacyRule])).toEqual(['json', 'symfony-icu', 'symfony']);
+    expect(await order([jsonRule, legacyRule, icuRule])).toEqual(['json', 'symfony-icu', 'symfony']);
+  });
+
+  it('prints a warning from the ICU rule only for the namespaces it owns', async () => {
+    const cwd = await tmp();
+    await seed(cwd, ['messages+intl-icu.en.yaml', 'validators.en.yaml']);
+    const client = {
+      get: vi.fn(async (_path: string, query: Record<string, string>) => ({
+        files: [],
+        warnings: query.dialect === 'symfony-icu' ? ['it/messages: icu note', 'it/validators: legacy note', 'general note'] : [],
+      })),
+    };
+    const out: string[] = [];
+
+    await runPull({}, { cwd, config: twoRules, api: client as never, out: (line: string) => out.push(line) });
+
+    expect(out).toContain('warning: it/messages: icu note');
+    expect(out).toContain('warning: general note');
+    expect(out.join('\n')).not.toContain('legacy note');
+  });
+
+  it('finds the files of rules whose folder holds glob metacharacters', async () => {
+    const cwd = await tmp();
+    await mkdir(join(cwd, '(app)/translations'), { recursive: true });
+    await writeFile(join(cwd, '(app)/translations/validators.en.yaml'), 'old: x\n');
+    const icuApp = { ...icuRule, pattern: '(app)/translations/{namespace}+intl-icu.{locale}.yaml' };
+    const legacyApp = { ...legacyRule, pattern: '(app)/translations/{namespace}.{locale}.yaml' };
+    const client = server(['messages', 'validators']);
+
+    await runPull({}, { cwd, config: { ...twoRules, files: [icuApp, legacyApp] }, api: client as never, out: quiet });
+
+    // validators is on disk under the legacy rule, so the legacy rule owns it; messages goes to the first rule.
+    expect(client.get).toHaveBeenNthCalledWith(2, '/cli/v1/pull', { format: 'yaml', dialect: 'symfony', jsonStyle: 'flat', namespaces: 'validators' });
+    expect((await readdir(join(cwd, '(app)/translations'))).sort()).toEqual([
+      'messages+intl-icu.en.yaml',
+      'messages+intl-icu.it.yaml',
+      'validators.en.yaml',
+      'validators.it.yaml',
+    ]);
   });
 
   it('without an ICU rule, two legacy rules ask for everything and write by ownership', async () => {

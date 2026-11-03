@@ -21,6 +21,9 @@ export interface Match {
 
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** Literal pattern text as a glob that matches only itself (`(app)/` → `\(app\)/`); `fg.escapePath` refuses ''. */
+const escapeGlob = (text: string): string => (text === '' ? '' : fg.escapePath(text));
+
 /** Patterns are written with `/`; tolerate `\` so a Windows-edited config still matches. */
 const posix = (value: string): string => value.replaceAll('\\', '/');
 
@@ -50,7 +53,7 @@ export const compile = (pattern: string, android: boolean): { glob: string; rege
   // `values-{locale}`: the dash belongs to the optional group, so it leaves the literal text.
   const optional = (index: number): boolean => android && parts[index + 1] === '{locale}' && parts[index]!.endsWith('-');
   const glob: string = parts
-    .map((part, index) => (part === '{locale}' || part === '{namespace}' ? '*' : optional(index) ? part.slice(0, -1) : part))
+    .map((part, index) => (part === '{locale}' || part === '{namespace}' ? '*' : escapeGlob(optional(index) ? part.slice(0, -1) : part)))
     .join('');
   const regex: RegExp = new RegExp(
     `^${parts

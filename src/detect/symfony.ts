@@ -2,7 +2,7 @@ import fg from 'fast-glob';
 import { posix } from 'node:path';
 
 import type { FileRule } from '../config.js';
-import { isKnownLanguage, kebab, LOCALE_TOKEN, NONE, type Detection } from './shared.js';
+import { globPrefix, isKnownLanguage, kebab, LOCALE_TOKEN, NONE, type Detection } from './shared.js';
 
 const TRANSLATIONS_DIR: string = 'translations';
 const IGNORE: string[] = ['**/vendor/**', '**/node_modules/**', '**/var/**'];
@@ -45,8 +45,8 @@ export async function detectSymfony(cwd: string): Promise<Detection> {
     if (entry === undefined) continue;
     if (!apps.has(entry.prefix)) {
       const markers: string[][] = await Promise.all([
-        fg(`${entry.prefix}composer.json`, { cwd, onlyFiles: true }),
-        fg(`${entry.prefix}symfony.lock`, { cwd, onlyFiles: true }),
+        fg(`${globPrefix(entry.prefix)}composer.json`, { cwd, onlyFiles: true }),
+        fg(`${globPrefix(entry.prefix)}symfony.lock`, { cwd, onlyFiles: true }),
       ]);
       apps.set(entry.prefix, markers.some((found) => found.length > 0));
     }
@@ -57,7 +57,12 @@ export async function detectSymfony(cwd: string): Promise<Detection> {
   const rules: FileRule[] = [];
   const notes: string[] = [];
   const groups: Map<string, Entry[]> = new Map();
-  for (const entry of entries) groups.set(`${entry.prefix}\0${entry.ext}`, [...(groups.get(`${entry.prefix}\0${entry.ext}`) ?? []), entry]);
+  for (const entry of entries) {
+    const key: string = `${entry.prefix}\0${entry.ext}`;
+    const group: Entry[] | undefined = groups.get(key);
+    if (group === undefined) groups.set(key, [entry]);
+    else group.push(entry);
+  }
 
   for (const key of [...groups.keys()].sort(byText)) {
     const group: Entry[] = groups.get(key) as Entry[];

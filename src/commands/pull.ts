@@ -166,6 +166,9 @@ const symfonyOwners = async (rules: FileRule[], claimed: Set<string>, cwd: strin
   return owners;
 };
 
+/** Server warnings start with `<locale>/<namespace>: `. */
+const WARNING_NAMESPACE: RegExp = /^[^/\s]+\/([a-z0-9-]+): /;
+
 /** A Windows checkout (autocrlf, BOM) must not count as drift. */
 const normalizeEol = (text: string): string => text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
 
@@ -200,7 +203,15 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
 
   const context: PathContext = await pathContext(deps.config, deps.api);
 
-  const rules: FileRule[] = lead === undefined ? deps.config.files : [lead, ...deps.config.files.filter((rule) => rule !== lead)];
+  // `files` order stands; only the lead moves, right before the first Symfony wildcard rule, so it runs ahead of the others.
+  const rules: FileRule[] =
+    lead === undefined
+      ? deps.config.files
+      : deps.config.files.flatMap((rule) => {
+          if (rule === symfonyRules[0]) return rule === lead ? [rule] : [lead, rule];
+
+          return rule === lead ? [] : [rule];
+        });
   for (const rule of rules) {
     if (opts.namespace !== undefined && rule.namespace !== undefined && rule.namespace !== opts.namespace) continue;
     const wildcard: boolean = rule.namespace === undefined;
@@ -270,6 +281,10 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
       if (variants.length === 1) responses.push(res);
       else merged.files.push(...res.files.filter((file) => variant.accept(file.locale)));
       for (const warning of res.warnings) {
+        // The lead asks for every namespace; a warning about one another rule owns is that rule's to print.
+        // The server emits no pull warnings for yaml yet (only json's nested conflict), so this is a forward guard.
+        const about: string | undefined = WARNING_NAMESPACE.exec(warning)?.[1];
+        if (rule === lead && about !== undefined && ownerOf(about) !== lead) continue;
         if (variants.length > 1) {
           if (merged.warnings.includes(warning)) continue;
           merged.warnings.push(warning);

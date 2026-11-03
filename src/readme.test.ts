@@ -138,6 +138,10 @@ describe('README', () => {
     expect(options).toMatch(/- `init`: .*`-y\/--yes`.*`--api-url <url>`/);
   });
 
+  it('documents --namespace as single-valued', () => {
+    expect(section('Commands')).toContain('- `--namespace <ns>` (one namespace; repeat the command for several)');
+  });
+
   it('documents the Rails rule, normalize layout, framework data and array gaps', () => {
     const rails: string = section('Rails (YAML)');
     for (const needle of ['"yamlDialect": "rails"', 'i18n-tasks normalize', 'line_width', 'arrayGap', '"locales"']) {

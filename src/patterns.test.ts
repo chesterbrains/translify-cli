@@ -34,6 +34,24 @@ describe('findFiles', () => {
     ]);
   });
 
+  it('matches a pattern whose literal parts hold glob metacharacters', async () => {
+    const root = await tree(['(app)/translations/messages.en.yaml', 'app/translations/messages.it.yaml', '[v1]/en/cart.json', 'v/en/cart.json']);
+    const found = await findFiles(
+      config({
+        files: [
+          { pattern: '(app)/translations/{namespace}.{locale}.yaml', format: 'yaml', yamlDialect: 'symfony' },
+          { pattern: '[v1]/{locale}/{namespace}.json', format: 'json' },
+        ],
+      }),
+      root,
+    );
+
+    expect(found.map(({ path, locale, namespace }) => ({ path, locale, namespace }))).toEqual([
+      { path: '(app)/translations/messages.en.yaml', locale: 'en', namespace: 'messages' },
+      { path: '[v1]/en/cart.json', locale: 'en', namespace: 'cart' },
+    ]);
+  });
+
   it('uses the fixed namespace and maps locales for ARB', async () => {
     const root = await tree(['lib/l10n/app_en_US.arb', 'lib/l10n/app_it.arb']);
     const found = await findFiles(

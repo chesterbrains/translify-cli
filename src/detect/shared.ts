@@ -1,3 +1,5 @@
+import fg from 'fast-glob';
+
 import type { FileRule } from '../config.js';
 
 export interface Detection {
@@ -9,6 +11,9 @@ export interface Detection {
 export type Detector = (cwd: string) => Promise<Detection>;
 
 export const NONE: Detection = { rules: [], notes: [] };
+
+/** A path prefix as a literal glob (`(app)/` matches only itself); `fg.escapePath` refuses the empty root prefix. */
+export const globPrefix = (prefix: string): string => (prefix === '' ? '' : fg.escapePath(prefix));
 
 /** `MyApp_Web` → `myapp-web`; an empty result is the caller's problem (it picks a fallback). */
 export const kebab = (name: string): string =>
