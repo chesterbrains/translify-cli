@@ -98,6 +98,17 @@ describe('detectSymfony', () => {
     });
   });
 
+  it('notes an ICU domain that is not a valid namespace with the symfony-icu dialect', async () => {
+    const cwd: string = await tree({ 'composer.json': '{}', 'translations/EasyAdminBundle+intl-icu.en.yaml': '' });
+
+    expect(await detectSymfony(cwd)).toEqual({
+      rules: [],
+      notes: [
+        'translations/EasyAdminBundle+intl-icu.en.yaml is domain "EasyAdminBundle", which is not a valid namespace: add { "pattern": "translations/EasyAdminBundle+intl-icu.{locale}.yaml", "format": "yaml", "yamlDialect": "symfony-icu", "namespace": "easy-admin-bundle" } by hand.',
+      ],
+    });
+  });
+
   it('writes one rule per extension', async () => {
     const cwd: string = await tree({
       'composer.json': '{}',
@@ -116,6 +127,18 @@ describe('detectSymfony', () => {
       'composer.json': '{}',
       'vendor/x/translations/messages.en.yaml': '',
       'translations/sub/messages.en.yaml': '',
+    });
+
+    expect(await detectSymfony(cwd)).toEqual({ rules: [], notes: [] });
+  });
+
+  it('ignores node_modules/ and var/', async () => {
+    const cwd: string = await tree({
+      'composer.json': '{}',
+      'node_modules/x/translations/messages.en.yaml': '',
+      'node_modules/x/composer.json': '{}',
+      'var/translations/messages.en.yaml': '',
+      'var/composer.json': '{}',
     });
 
     expect(await detectSymfony(cwd)).toEqual({ rules: [], notes: [] });
