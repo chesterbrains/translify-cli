@@ -121,6 +121,12 @@ describe('detectSymfony', () => {
     expect(await detectSymfony(cwd)).toEqual({ rules: [], notes: [] });
   });
 
+  it('finds the marker of an app whose folder holds glob metacharacters', async () => {
+    const cwd: string = await tree({ '(app)/composer.json': '{}', '(app)/translations/messages.en.yaml': '' });
+
+    expect((await detectSymfony(cwd)).rules).toEqual([legacy('(app)/translations/{namespace}.{locale}.yaml')]);
+  });
+
   it('finds an app below the root with a prefixed pattern', async () => {
     const cwd: string = await tree({ 'apps/api/composer.json': '{}', 'apps/api/translations/messages.en.yaml': '' });
 

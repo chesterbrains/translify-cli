@@ -205,6 +205,12 @@ describe('detectRails', () => {
     expect(new Set(rules.map((r) => r.namespace)).size).toBe(2);
   });
 
+  it('finds the marker of an app whose folder holds glob metacharacters', async () => {
+    const cwd: string = await tree({ '(app)/Gemfile': '', '(app)/config/locales/en.yml': yml('en') });
+
+    expect((await detectRails(cwd)).rules.map((r) => r.pattern)).toEqual(['(app)/config/locales/{locale}.yml']);
+  });
+
   it('ignores a config/locales folder that has no Gemfile or application.rb beside it', async () => {
     const cwd: string = await tree({
       Gemfile: '',

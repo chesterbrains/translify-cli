@@ -4,7 +4,7 @@ import fg from 'fast-glob';
 
 import type { FileRule } from '../config.js';
 import { compile } from '../patterns.js';
-import { isKnownLanguage, kebab, LOCALE_TOKEN, type Detection } from './shared.js';
+import { globPrefix, isKnownLanguage, kebab, LOCALE_TOKEN, type Detection } from './shared.js';
 
 const LOCALES_DIR: string = 'config/locales';
 const IGNORE: string[] = ['**/vendor/**', '**/node_modules/**', '**/tmp/**'];
@@ -106,8 +106,8 @@ export async function detectRails(cwd: string): Promise<Detection> {
   const unconfirmedFiles: Map<string, string[]> = new Map();
   for (const prefix of [...apps.keys()].sort()) {
     const [hasGemfile, hasApplication]: [string[], string[]] = await Promise.all([
-      fg(`${prefix}Gemfile`, { cwd, onlyFiles: true }),
-      fg(`${prefix}config/application.rb`, { cwd, onlyFiles: true }),
+      fg(`${globPrefix(prefix)}Gemfile`, { cwd, onlyFiles: true }),
+      fg(`${globPrefix(prefix)}config/application.rb`, { cwd, onlyFiles: true }),
     ]);
     if (hasGemfile.length === 0 && hasApplication.length === 0) continue;
 
