@@ -755,6 +755,39 @@ describe('runPull, two wildcard Symfony rules', () => {
     expect(await listing(cwd)).toEqual(['messages.en.yaml', 'messages.it.yaml', 'validators.en.yaml', 'validators.it.yaml']);
   });
 
+  it('keeps files order and moves the ICU rule only ahead of the other Symfony rules', async () => {
+    const jsonRule = { pattern: 'locales/{locale}/{namespace}.json', format: 'json', jsonStyle: 'flat' } as const;
+    const order = async (files: Config['files']): Promise<string[]> => {
+      const cwd = await tmp();
+      await seed(cwd, ['messages+intl-icu.en.yaml', 'validators.en.yaml']);
+      const client = server(['messages', 'validators']);
+      await runPull({}, { cwd, config: { ...twoRules, files }, api: client as never, out: quiet });
+
+      return client.get.mock.calls.map((call) => call[1].dialect ?? call[1].format);
+    };
+
+    expect(await order([jsonRule, icuRule, legacyRule])).toEqual(['json', 'symfony-icu', 'symfony']);
+    expect(await order([jsonRule, legacyRule, icuRule])).toEqual(['json', 'symfony-icu', 'symfony']);
+  });
+
+  it('prints a warning from the ICU rule only for the namespaces it owns', async () => {
+    const cwd = await tmp();
+    await seed(cwd, ['messages+intl-icu.en.yaml', 'validators.en.yaml']);
+    const client = {
+      get: vi.fn(async (_path: string, query: Record<string, string>) => ({
+        files: [],
+        warnings: query.dialect === 'symfony-icu' ? ['it/messages: icu note', 'it/validators: legacy note', 'general note'] : [],
+      })),
+    };
+    const out: string[] = [];
+
+    await runPull({}, { cwd, config: twoRules, api: client as never, out: (line: string) => out.push(line) });
+
+    expect(out).toContain('warning: it/messages: icu note');
+    expect(out).toContain('warning: general note');
+    expect(out.join('\n')).not.toContain('legacy note');
+  });
+
   it('without an ICU rule, two legacy rules ask for everything and write by ownership', async () => {
     const cwd = await tmp();
     await mkdir(join(cwd, 'app/translations'), { recursive: true });
