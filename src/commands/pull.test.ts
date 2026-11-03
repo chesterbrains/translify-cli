@@ -798,6 +798,26 @@ describe('runPull, two wildcard Symfony rules', () => {
     expect(out.join('\n')).not.toContain('legacy note');
   });
 
+  it('finds the files of rules whose folder holds glob metacharacters', async () => {
+    const cwd = await tmp();
+    await mkdir(join(cwd, '(app)/translations'), { recursive: true });
+    await writeFile(join(cwd, '(app)/translations/validators.en.yaml'), 'old: x\n');
+    const icuApp = { ...icuRule, pattern: '(app)/translations/{namespace}+intl-icu.{locale}.yaml' };
+    const legacyApp = { ...legacyRule, pattern: '(app)/translations/{namespace}.{locale}.yaml' };
+    const client = server(['messages', 'validators']);
+
+    await runPull({}, { cwd, config: { ...twoRules, files: [icuApp, legacyApp] }, api: client as never, out: quiet });
+
+    // validators is on disk under the legacy rule, so the legacy rule owns it; messages goes to the first rule.
+    expect(client.get).toHaveBeenNthCalledWith(2, '/cli/v1/pull', { format: 'yaml', dialect: 'symfony', jsonStyle: 'flat', namespaces: 'validators' });
+    expect((await readdir(join(cwd, '(app)/translations'))).sort()).toEqual([
+      'messages+intl-icu.en.yaml',
+      'messages+intl-icu.it.yaml',
+      'validators.en.yaml',
+      'validators.it.yaml',
+    ]);
+  });
+
   it('without an ICU rule, two legacy rules ask for everything and write by ownership', async () => {
     const cwd = await tmp();
     await mkdir(join(cwd, 'app/translations'), { recursive: true });
