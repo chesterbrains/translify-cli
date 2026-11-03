@@ -598,6 +598,7 @@ Options:
 - `pull` and `status`: `--from <working|env:slug>`, `--locale <locale>` (as named on disk), `--namespace <ns>`, `--only-approved`
 - `publish`: `--fail-on-withheld`, `--allow-errors`
 - `lint`: `--namespace <ns>`, `--locale <locale>` (as named on disk), `--severity <error|warning>` (only list cells whose worst issue is this severity; counts and the exit code are unaffected), `--max-warnings <n>`
+- `--namespace <ns>` (one namespace; repeat the command for several)
 - `--json` on `push`, `pull`, `status`, `publish` and `lint`: machine-readable output on stdout
 - `--debug` (global): print error details and stack traces
 
