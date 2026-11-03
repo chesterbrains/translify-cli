@@ -282,6 +282,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
       else merged.files.push(...res.files.filter((file) => variant.accept(file.locale)));
       for (const warning of res.warnings) {
         // The lead asks for every namespace; a warning about one another rule owns is that rule's to print.
+        // The server emits no pull warnings for yaml yet (only json's nested conflict), so this is a forward guard.
         const about: string | undefined = WARNING_NAMESPACE.exec(warning)?.[1];
         if (rule === lead && about !== undefined && ownerOf(about) !== lead) continue;
         if (variants.length > 1) {
