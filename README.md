@@ -617,25 +617,26 @@ translify get checkout.promo.title        # every locale
 translify get checkout.promo.title fr     # one raw value
 ```
 
-Without a locale it prints a table of every enabled locale (the default locale first), with each cell's status, its worst placeholder issue (`error` or `warning`, blank when clean) and its value. A newline in a value is shown as `\n`, and an empty cell as `(empty)`:
+Without a locale it prints a table of every enabled locale (the default locale first), with each cell's status, its worst placeholder issue (`error` or `warning`, blank when clean) and its value. Statuses are the server's (`APPROVED`, `NEEDS_REVIEW`, `DRAFT`, `-` for an empty cell) and cells come in the server's order: default locale first, then by locale code. A carriage return, newline or tab in a value is shown as `\r`, `\n` or `\t`, and an empty cell as `(empty)`:
 
 ```
 Namespace: app
 Key:       checkout.promo.title
 
-LOCALE  STATUS        ISSUES  VALUE
-en      approved              Save {percent}% today
-fr      needs-review          Économisez {percent}% aujourd'hui
-de      -                     (empty)
+LOCALE  STATUS        ISSUES   VALUE
+en      APPROVED               Save {percent}% today
+de      NEEDS_REVIEW  warning  Sparen Sie heute {percent}%
+es      -                      (empty)
+fr      NEEDS_REVIEW           Économisez {percent}% aujourd'hui
 ```
 
-With a locale it prints the raw value and nothing else (no trailing decoration), so it is safe to embed in a script. The locale is named as on disk, like `--locale` on `pull`. An empty cell prints `No <locale> translation for <key>.` on stderr and exits 1.
+With a locale it prints the raw value and nothing else (no trailing decoration), so it is safe to embed in a script. The locale is named as on disk, like `--locale` on `pull`. An empty cell prints `No <locale> translation for <key>.` on stderr and exits 1; a locale the project has not enabled exits 1 with `Locale <x> is not an enabled locale of this project.`
 
 ```sh
 echo "Title: $(translify get checkout.promo.title en)"
 ```
 
-`--json` prints the server's answer (`namespace`, `key`, `description`, `cells[]` with `locale`, `isDefault`, `value`, `status`, `issueSeverity`), also when a locale is given:
+`--json` prints the server's answer (`namespace`, `key`, `description`, `cells[]` with `locale`, `isDefault`, `value`, `status`, `issueSeverity`), also when a locale is given (on an empty cell it prints the JSON and still exits 1):
 
 ```sh
 translify get checkout.promo.title --json | jq -r '.cells[] | select(.locale=="fr") | .status'
@@ -662,6 +663,7 @@ translify set checkout.promo.banner en "Free shipping" --namespace app      # a 
 
 - An empty value is refused: clearing a translation is done in Translify.
 - **Rate limit.** The server allows 120 requests per minute per secret key. When it answers `RATE_LIMITED` the CLI waits (honouring `Retry-After`) and retries up to 3 times. A script that sets hundreds of keys will be slowed down by this; use `translify push` for bulk changes.
+- **Run `set` commands one after another, not in parallel, when they touch the same file.** The server keeps every value, but two simultaneous local patches can lose one; `translify pull` repairs it.
 
 #### Review
 
@@ -671,10 +673,13 @@ Like `push`, a target-locale translation lands as **needs-review** when the proj
 
 After the server accepts the write, `set` updates the file for that locale and namespace, unless you pass `--no-write`:
 
-- Only rules with `"format": "json"` are patched. For any other format, or when no rule covers the locale and namespace, `set` prints a hint to run `translify pull` and touches nothing.
+- Only rules with `"format": "json"` are patched. For any other format `set` prints a hint to run `translify pull` and touches nothing; when no rule covers the locale and namespace it prints `No files rule covers <locale>/<namespace>; nothing written locally.`
+- A path that resolves outside the project directory is refused (`Refusing to write <path>: it resolves outside the project directory.`), as in `pull`, and nothing is written. The same goes for a server answer for another locale or namespace than the one you asked for.
 - The existing entry is replaced in place, leaving the rest of the file as it was. A new entry is inserted: with `"jsonStyle": "nested"` (the default) missing parent objects are created, with `"flat"` one dotted key is added. The entry goes in sorted position when the file is already sorted the way `pull` writes it, else at the end of its object.
-- A file that does not exist yet is created, with its folders.
-- A file that is not valid JSON, one where another value sits on the key's path (a key `a.b` when `a` is a string, or `a.b` is an object), or one where a parent name appears twice is left untouched, with a hint to run `translify pull`.
+- A file that does not exist yet is created, with its folders. It holds only that one key: run `translify pull` for the whole file.
+- A file that is not valid JSON is left untouched, with a hint to run `translify pull`.
+- A value on the key's path in a nested file (a key `a.b` when `a` is a string, or `a.b` is an object) is not overwritten: nothing is written locally, because a nested JSON file cannot hold both. Set `"jsonStyle": "flat"` on that files rule to keep both keys.
+- A name that appears twice on the key's path (JSON keeps only the last) leaves the file untouched: fix the file, then run `translify pull`.
 - A local problem never fails the command: the server already holds the write, so `set` still exits 0. `--json` prints `{ "response": …, "file": { "path", "action", "reason"? } }` so a script can see what happened to the file.
 
 ## Conflict rules
