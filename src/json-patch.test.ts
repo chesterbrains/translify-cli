@@ -2,7 +2,18 @@ import { describe, expect, it } from 'vitest';
 
 import { patchJson, pullOrder, type PatchResult } from './json-patch.js';
 
-const pulled = (tree: unknown): string => `${JSON.stringify(tree, null, 2)}\n`;
+// The backend's sortDeep orders keys by UTF-16 code unit at every depth, then JS puts integer-like keys first.
+const sortDeep = (node: unknown): unknown =>
+  typeof node === 'object' && node !== null && !Array.isArray(node)
+    ? Object.fromEntries(
+        Object.keys(node)
+          .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+          .map((key) => [key, sortDeep((node as Record<string, unknown>)[key])]),
+      )
+    : node;
+const pulled = (tree: unknown): string => `${JSON.stringify(sortDeep(tree), null, 2)}\n`;
+// A document laid out as given (fixtures that must stay in a specific order).
+const raw = (tree: unknown): string => `${JSON.stringify(tree, null, 2)}\n`;
 const patched = (r: PatchResult): string => {
   if (r.action === 'skipped') throw new Error(r.reason);
   return r.text;
@@ -25,20 +36,20 @@ describe('patchJson', () => {
   });
 
   it.each(['nested', 'flat'] as const)('pull equivalence (%s): a pulled file plus set equals the new pull', (style) => {
-    const before = style === 'nested' ? { auth: { login: 'Log in' }, zeta: 'z' } : { 'auth.login': 'Log in', zeta: 'z' };
+    const before = style === 'nested' ? { zeta: 'z', auth: { login: 'Log in' } } : { zeta: 'z', 'auth.login': 'Log in' };
     const after =
       style === 'nested'
-        ? { auth: { login: 'Log in' }, checkout: { promo: { title: 'Limited offer' } }, zeta: 'z' }
-        : { 'auth.login': 'Log in', 'checkout.promo.title': 'Limited offer', zeta: 'z' };
+        ? { zeta: 'z', checkout: { promo: { title: 'Limited offer' } }, auth: { login: 'Log in' } }
+        : { zeta: 'z', 'checkout.promo.title': 'Limited offer', 'auth.login': 'Log in' };
     expect(patched(patchJson(pulled(before), 'checkout.promo.title', 'Limited offer', style))).toBe(pulled(after));
   });
 
   it('appends when the siblings are not in pull order', () => {
-    expect(patched(patchJson(pulled({ b: '1', a: '2' }), 'aa', 'x', 'flat'))).toBe(pulled({ b: '1', a: '2', aa: 'x' }));
+    expect(patched(patchJson(raw({ b: '1', a: '2' }), 'aa', 'x', 'flat'))).toBe(raw({ b: '1', a: '2', aa: 'x' }));
   });
 
   it('integer-like segments keep their place and sort numerically', () => {
-    const text = pulled({ errors: { '404': 'Not found', '500': 'Server', other: 'x' } });
+    const text = raw({ errors: { '404': 'Not found', '500': 'Server', other: 'x' } });
     expect(patched(patchJson(text, 'errors.409', 'Conflict', 'nested'))).toBe(
       '{\n  "errors": {\n    "404": "Not found",\n    "409": "Conflict",\n    "500": "Server",\n    "other": "x"\n  }\n}\n',
     );
@@ -92,14 +103,24 @@ describe('patchJson', () => {
 
   it('refuses to insert below a parent name that occurs twice', () => {
     const text = '{"a":{"x":"1"},"a":{"y":"2"}}';
-    expect(patchJson(text, 'a.z', 'v', 'nested')).toEqual({ action: 'skipped', reason: 'blocked', at: 'a' });
+    expect(patchJson(text, 'a.z', 'v', 'nested')).toEqual({ action: 'skipped', reason: 'ambiguous', at: 'a' });
+  });
+
+  it('a duplicated name hides its earlier copies, as JSON.parse does', () => {
+    // The server sees only {"a":{"c":"2"}}: a.b is not a key there, so it is not edited in the invisible first copy.
+    expect(patchJson('{"a":{"b":"1"},"a":{"c":"2"}}', 'a.b', 'v', 'nested')).toEqual({ action: 'skipped', reason: 'ambiguous', at: 'a' });
+    // The visible (last) copy is the one that is edited.
+    const text = '{"a":{"b":"1"},"a":{"b":"2"}}';
+    expect(patched(patchJson(text, 'a.b', 'v', 'nested'))).toBe('{"a":{"b":"1"},"a":{"b":"v"}}');
   });
 
   it('pins dotted-prefix coexistence: the server reads a.b and a.b.c as distinct keys', () => {
     // {"a":"x"} + flat a.b: two distinct keys on the server.
-    expect(patched(patchJson(pulled({ a: 'x' }), 'a.b', 'v', 'flat'))).toBe(pulled({ a: 'x', 'a.b': 'v' }));
+    expect(patched(patchJson(pulled({ a: 'x' }), 'a.b', 'v', 'flat'))).toBe(pulled({ 'a.b': 'v', a: 'x' }));
     // {"a.b":"x"} + nested a.b.c: distinct keys, so the nested branch is added beside the dotted one.
     expect(patched(patchJson(pulled({ 'a.b': 'x' }), 'a.b.c', 'v', 'nested'))).toBe(pulled({ a: { b: { c: 'v' } }, 'a.b': 'x' }));
+    // {"a.b.c":"x"} + nested a.b: distinct keys again.
+    expect(patched(patchJson(pulled({ 'a.b.c': 'x' }), 'a.b', 'v', 'nested'))).toBe(pulled({ a: { b: 'v' }, 'a.b.c': 'x' }));
     // {"a.b":"x"} + flat a.b.c: distinct keys again.
     expect(patched(patchJson(pulled({ 'a.b': 'x' }), 'a.b.c', 'v', 'flat'))).toBe(pulled({ 'a.b': 'x', 'a.b.c': 'v' }));
   });

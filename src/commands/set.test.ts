@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -76,7 +76,6 @@ const runFailing = (error: unknown, key: string, locale: string, value: string) 
     readStdin: undefined,
   });
 
-const runNoStdin = (key: string, locale: string, value: string) => runFailing(undefined, key, locale, value);
 
 describe('runSet', () => {
   it('writes the server, then patches the one entry', async () => {
@@ -149,13 +148,86 @@ describe('runSet', () => {
 
   it.each([
     ['a broken file', '{ "a": ', 'locales/en/common.json is not valid JSON; run `translify pull` to sync the file.'],
-    ['a blocked path', '{\n  "promo": "text"\n}\n', 'locales/en/common.json holds a value at "promo"; run `translify pull` to sync the file.'],
+    [
+      'a blocked path',
+      '{\n  "promo": "text"\n}\n',
+      'locales/en/common.json holds a value at "promo", and a nested JSON file cannot keep "promo.title" beside it; nothing written locally. Set "jsonStyle": "flat" on this files rule to keep both.',
+    ],
+    [
+      'an ambiguous path',
+      '{"promo":{"a":"1"},"promo":{"b":"2"}}',
+      'locales/en/common.json has "promo" more than once; fix the file, then run `translify pull`.',
+    ],
   ])('%s: the server write stands, the file is untouched, exit 0', async (_name, text, line) => {
     await write('locales/en/common.json', text);
     const { code, out } = await run('promo.title', 'en', 'Hi', {}, res());
     expect(code).toBe(EXIT.ok);
     expect(out.at(-1)).toBe(line);
     expect(await read('locales/en/common.json')).toBe(text);
+  });
+
+  it('--json names the reason of a skipped patch', async () => {
+    await write('locales/en/common.json', '{"promo":{"a":"1"},"promo":{"b":"2"}}');
+    const ambiguous = await run('promo.title', 'en', 'Hi', { json: true }, res());
+    expect(JSON.parse(ambiguous.out[0]!).file).toEqual({ path: 'locales/en/common.json', action: 'skipped', reason: 'ambiguous' });
+    await write('locales/en/common.json', '{"promo":"x"}');
+    const blocked = await run('promo.title', 'en', 'Hi', { json: true }, res());
+    expect(JSON.parse(blocked.out[0]!).file.reason).toBe('blocked');
+  });
+
+  it('a response path that resolves outside the project is refused: no read, no write', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'translify-outer-'));
+    const inner = join(parent, 'project');
+    await mkdir(inner);
+    const put = vi.fn().mockResolvedValue(res({ namespace: '../../evil' }));
+    const out: string[] = [];
+    try {
+      const code = await runSet('promo.title', 'en', 'Hi', { json: false }, {
+        cwd: inner,
+        config: config([rule({ pattern: '{namespace}/{locale}.json' })]),
+        api: { put, get: vi.fn() } as never,
+        out: (l) => out.push(l),
+        err: () => undefined,
+        readStdin: undefined,
+      });
+      expect(code).toBe(EXIT.ok);
+      expect(out.at(-1)).toBe('Refusing to write ../../evil/en.json: it resolves outside the project directory.');
+      expect(await readdir(parent)).toEqual(['project']);
+      expect(await readdir(inner)).toEqual([]);
+
+      out.length = 0;
+      await runSet('promo.title', 'en', 'Hi', { json: true }, {
+        cwd: inner,
+        config: config([rule({ pattern: '{namespace}/{locale}.json' })]),
+        api: { put, get: vi.fn() } as never,
+        out: (l) => out.push(l),
+        err: () => undefined,
+        readStdin: undefined,
+      });
+      expect(JSON.parse(out[0]!).file).toEqual({ path: null, action: 'skipped', reason: 'outside' });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('a response for another locale or namespace than asked touches nothing', async () => {
+    const wrongLocale = await run('promo.title', 'en', 'Hi', {}, res({ locale: 'de' }));
+    expect(wrongLocale.out.at(-1)).toBe('The server answered for de/common, not what was asked; nothing written locally.');
+    const wrongNamespace = await run('promo.title', 'en', 'Hi', { namespace: 'shop', json: true }, res({ namespace: 'common' }));
+    expect(JSON.parse(wrongNamespace.out[0]!).file).toEqual({ path: null, action: 'skipped', reason: 'mismatch' });
+    await expect(read('locales/de/common.json')).rejects.toThrow();
+    await expect(read('locales/en/common.json')).rejects.toThrow();
+  });
+
+  it('a plural issue lists its categories', async () => {
+    const { out } = await run(
+      'k',
+      'ru',
+      'v',
+      { write: false },
+      res({ locale: 'ru', issues: [{ code: 'PLURAL_MISSING', severity: 'WARNING', categories: ['few', 'many'] }] }),
+    );
+    expect(out).toContain('warning: placeholder warning: PLURAL_MISSING few, many');
   });
 
   it('a non-JSON rule gets the pull hint; no rule at all says so', async () => {
@@ -180,8 +252,12 @@ describe('runSet', () => {
   it('value from stdin; a terminal stdin and an empty value are refused before any request', async () => {
     const piped = await run('k', 'en', '-', { write: false }, res(), undefined, async () => 'from a pipe\n');
     expect(piped.put.mock.calls[0]![1]).toMatchObject({ value: 'from a pipe' });
-    await expect(runNoStdin('k', 'en', '-')).rejects.toMatchObject({ exitCode: EXIT.failed, message: expect.stringContaining('needs piped input') });
-    await expect(runFailing(undefined, 'k', 'en', '')).rejects.toMatchObject({ exitCode: EXIT.failed, message: expect.stringContaining('empty value') });
+    const refusedPut = vi.fn();
+    const refuse = (value: string) =>
+      runSet('k', 'en', value, {}, { cwd: dir, config: config(), api: { put: refusedPut, get: vi.fn() } as never, out: () => undefined, err: () => undefined, readStdin: undefined });
+    await expect(refuse('-')).rejects.toMatchObject({ exitCode: EXIT.failed, message: expect.stringContaining('needs piped input') });
+    await expect(refuse('')).rejects.toMatchObject({ exitCode: EXIT.failed, message: expect.stringContaining('empty value') });
+    expect(refusedPut).not.toHaveBeenCalled();
   });
 
   it('a file lookup that throws after the 200 is a skipped io outcome, exit 0', async () => {

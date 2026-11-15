@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import type { Config, FileRule } from '../config.js';
 import { pathContext } from '../context.js';
@@ -79,10 +79,32 @@ const verbOf = (res: SetResponse): string =>
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+const skippedLine = (patch: { reason: 'invalid' | 'blocked' | 'ambiguous'; at?: string }, path: string, key: string): string => {
+  switch (patch.reason) {
+    case 'invalid':
+      return `${path} is not valid JSON; run \`translify pull\` to sync the file.`;
+    case 'blocked':
+      return `${path} holds a value at "${patch.at}", and a nested JSON file cannot keep "${key}" beside it; nothing written locally. Set "jsonStyle": "flat" on this files rule to keep both.`;
+    case 'ambiguous':
+      return `${path} has "${patch.at}" more than once; fix the file, then run \`translify pull\`.`;
+  }
+};
+
 /** Patch the local file after the server accepted the write; every local problem is an outcome, never a throw. */
-async function patchLocal(res: SetResponse, value: string, deps: SetDeps): Promise<{ file: FileOutcome; line: string }> {
+async function patchLocal(
+  res: SetResponse,
+  value: string,
+  sent: { locale: string; namespace: string | undefined },
+  deps: SetDeps,
+): Promise<{ file: FileOutcome; line: string }> {
   let path: string | null = null;
   try {
+    if (res.locale !== sent.locale || (sent.namespace !== undefined && res.namespace !== sent.namespace)) {
+      return {
+        file: { path: null, action: 'skipped', reason: 'mismatch' },
+        line: `The server answered for ${res.locale}/${res.namespace}, not what was asked; nothing written locally.`,
+      };
+    }
     const context: PathContext = await pathContext(deps.config, deps.api);
     const target = targetFile(await findFiles(deps.config, deps.cwd, context), deps.config, context, res.locale, res.namespace);
     if (target === undefined) {
@@ -99,7 +121,14 @@ async function patchLocal(res: SetResponse, value: string, deps: SetDeps): Promi
       };
     }
 
-    const absolute: string = join(deps.cwd, path);
+    const absolute: string = resolve(deps.cwd, path);
+    const rel: string = relative(resolve(deps.cwd), absolute);
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+      return {
+        file: { path: null, action: 'skipped', reason: 'outside' },
+        line: `Refusing to write ${path}: it resolves outside the project directory.`,
+      };
+    }
     let text: string | undefined;
     try {
       text = await readFile(absolute, 'utf8');
@@ -110,10 +139,7 @@ async function patchLocal(res: SetResponse, value: string, deps: SetDeps): Promi
     if (patch.action === 'skipped') {
       return {
         file: { path, action: 'skipped', reason: patch.reason },
-        line:
-          patch.reason === 'invalid'
-            ? `${path} is not valid JSON; run \`translify pull\` to sync the file.`
-            : `${path} holds a value at "${patch.at}"; run \`translify pull\` to sync the file.`,
+        line: skippedLine(patch, path, res.key),
       };
     }
     if (patch.action === 'unchanged') return { file: { path, action: 'unchanged' }, line: `${path} already up to date.` };
@@ -143,7 +169,8 @@ export async function runSet(key: string, locale: string, value: string, opts: S
   }
 
   const namespace: string | undefined = configNamespace(deps.config, opts.namespace);
-  const body: Record<string, string> = { key, locale: toTranslifyLocale(locale, deps.config), value: text };
+  const sentLocale: string = toTranslifyLocale(locale, deps.config);
+  const body: Record<string, string> = { key, locale: sentLocale, value: text };
   if (namespace !== undefined) body.namespace = namespace;
   if (opts.status !== undefined) body.status = WIRE_STATUS[opts.status];
 
@@ -156,7 +183,7 @@ export async function runSet(key: string, locale: string, value: string, opts: S
   }
 
   const local: { file: FileOutcome; line: string | undefined } =
-    opts.write === false ? { file: { path: null, action: 'skipped', reason: 'no-write' }, line: undefined } : await patchLocal(res, text, deps);
+    opts.write === false ? { file: { path: null, action: 'skipped', reason: 'no-write' }, line: undefined } : await patchLocal(res, text, { locale: sentLocale, namespace }, deps);
 
   if (opts.json === true) {
     deps.out(JSON.stringify({ response: res, file: local.file }));
@@ -168,7 +195,8 @@ export async function runSet(key: string, locale: string, value: string, opts: S
   if (res.staleReset > 0) deps.out(`${res.staleReset} approved translation(s) moved back to needs-review.`);
   if (res.statusDowngraded) deps.out('Requested approved, landed needs-review: the translation has placeholder errors.');
   for (const issue of res.issues ?? []) {
-    deps.out(`warning: placeholder ${issue.severity.toLowerCase()}: ${issue.code}${issue.arg === undefined ? '' : ` ${issue.arg}`}`);
+    const detail: string = issue.arg !== undefined ? ` ${issue.arg}` : issue.categories !== undefined && issue.categories.length > 0 ? ` ${issue.categories.join(', ')}` : '';
+    deps.out(`warning: placeholder ${issue.severity.toLowerCase()}: ${issue.code}${detail}`);
   }
   if (local.line !== undefined) deps.out(local.line);
 

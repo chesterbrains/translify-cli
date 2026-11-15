@@ -69,7 +69,7 @@ export function explainKeyError(error: unknown, key: string): unknown {
   return message === undefined ? error : new CliError(error.exitCode, message, error.details);
 }
 
-const oneLine = (value: string): string => value.replace(/\n/g, '\\n');
+const oneLine = (value: string): string => value.replace(/[\r\n\t]/g, (c) => (c === '\n' ? '\\n' : c === '\r' ? '\\r' : '\\t'));
 
 const table = (res: GetKeyResponse): string => {
   const rows: string[][] = [

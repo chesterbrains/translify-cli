@@ -48,7 +48,7 @@ describe('README', () => {
       expect(commands, needle).toContain(needle);
     }
     const single: string = section('Single keys');
-    for (const needle of ['| translify set', '-- "-5%"', 'your shell', 'JSON', 'translify pull', 'needs-review', '$(translify get']) {
+    for (const needle of ['| translify set', '-- "-5%"', 'your shell', 'JSON', 'translify pull', 'needs-review', '$(translify get', '120 requests per minute', 'Set its source text', '--no-write', 'jsonStyle', 'outside the project directory', 'one after another']) {
       expect(single, needle).toContain(needle);
     }
   });

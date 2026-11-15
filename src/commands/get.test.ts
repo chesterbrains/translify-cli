@@ -57,6 +57,13 @@ describe('runGet', () => {
     );
   });
 
+  it('the table shows CR, LF and tab as escapes so a row stays on one line', async () => {
+    const cells = [{ locale: 'en', isDefault: true, value: 'a\r\nb\tc', status: 'APPROVED', issueSeverity: null }];
+    const { out } = await run({ ...RES, cells }, 'promo.title', undefined);
+    expect(out.split('\n').at(-1)).toBe('en      APPROVED          a\\r\\nb\\tc');
+    expect(out.split('\n')).toHaveLength(5);
+  });
+
   it('with a locale: the raw value only, real newlines', async () => {
     expect((await run(RES, 'promo.title', 'fr')).out).toBe('Offre\nlimitée');
   });

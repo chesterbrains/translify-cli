@@ -2,7 +2,7 @@ import { applyEdits, modify, parseTree, type Edit, type FormattingOptions, type 
 
 export type PatchResult =
   | { action: 'patched' | 'created' | 'unchanged'; text: string }
-  | { action: 'skipped'; reason: 'invalid' | 'blocked'; at?: string };
+  | { action: 'skipped'; reason: 'invalid' | 'blocked' | 'ambiguous'; at?: string };
 
 const BOM = '﻿';
 // JS orders integer-like own keys first, and only canonical array indices (below 2^32 - 1) count.
@@ -35,6 +35,18 @@ const propertiesOf = (object: Node): Property[] =>
     return name !== undefined && value !== undefined && typeof name.value === 'string' ? [{ name: name.value, key: name, value }] : [];
   });
 
+/** What JSON.parse keeps: of several properties with one name only the last is visible. */
+const visibleProperties = (object: Node): Property[] => {
+  const last = new Map<string, Property>();
+
+  for (const property of propertiesOf(object)) {
+    last.delete(property.name);
+    last.set(property.name, property);
+  }
+
+  return [...last.values()];
+};
+
 type Search = { found: 'leaf'; value: Node } | { found: 'blocked' } | { found: 'none' };
 
 /** Matches the key under any split of its dots; of several leaves the last in document order wins, as in the server's parser. */
@@ -42,7 +54,7 @@ function search(object: Node, rest: string): Search {
   let leaf: Node | undefined;
   let blocked = false;
 
-  for (const { name, value } of propertiesOf(object)) {
+  for (const { name, value } of visibleProperties(object)) {
     if (name === rest) {
       if (value.type === 'string') leaf = value;
       else blocked = true;
@@ -156,7 +168,7 @@ export function patchJson(text: string | undefined, key: string, value: string, 
     if (next === undefined) break;
     existing.push(segment);
     // JSON.parse keeps the last duplicate, so an entry added to the first would be invisible to the server.
-    if (matches.length > 1) return { action: 'skipped', reason: 'blocked', at: existing.join('.') };
+    if (matches.length > 1) return { action: 'skipped', reason: 'ambiguous', at: existing.join('.') };
     if (next.type !== 'object') return { action: 'skipped', reason: 'blocked', at: existing.join('.') };
     parent = next;
   }
