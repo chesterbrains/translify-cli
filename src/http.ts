@@ -46,6 +46,11 @@ export const CODE_EXIT: Record<string, ExitCode> = {
   ANDROID_UNSUPPORTED: EXIT.issues,
   STRINGS_UNSUPPORTED: EXIT.issues,
   YAML_UNSUPPORTED: EXIT.issues,
+  KEY_NOT_FOUND: EXIT.failed,
+  NAMESPACE_AMBIGUOUS: EXIT.failed,
+  NAMESPACE_REQUIRED: EXIT.failed,
+  SOURCE_REQUIRED: EXIT.failed,
+  KEY_ARCHIVED: EXIT.failed,
 };
 
 const exitFor = (status: number, code: string | undefined): ExitCode => {
@@ -175,6 +180,14 @@ export class Api {
           body: JSON.stringify(body),
           headers: { 'content-type': 'application/json' },
         });
+  }
+
+  async put<T>(path: string, body: object): Promise<T> {
+    return this.send<T>(path, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      headers: { 'content-type': 'application/json' },
+    });
   }
 
   private async send<T>(path: string, init: Omit<RequestInit, 'headers'> & { headers?: Record<string, string> }): Promise<T> {

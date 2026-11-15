@@ -820,6 +820,11 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `BAD_REQUEST` | 1 | The request was malformed. Re-run with `--debug` for the server's message. |
 | `ENVIRONMENT_NOT_FOUND` / `ENVIRONMENT_ARCHIVED` | 1 | Check the environment slug passed to `publish` or `--from env:<slug>`, and that it is not archived. |
 | `PROJECT_ARCHIVED` | 1 | The project is archived; unarchive it in Translify. |
+| `KEY_NOT_FOUND` | 1 | The key does not exist in this project (or is in the trash). Check the name and `--namespace`. |
+| `NAMESPACE_AMBIGUOUS` | 1 | The key exists in several namespaces. Re-run with `--namespace <ns>`. |
+| `NAMESPACE_REQUIRED` | 1 | The key is new, so say where it lives with `--namespace <ns>`. |
+| `SOURCE_REQUIRED` | 1 | A new key needs its source-language text first. Set the default locale's text, then the others. |
+| `KEY_ARCHIVED` | 1 | The key is in the Translify trash. Restore it there, or set its source text to bring it back. |
 | `SECRET_KEY_IN_URL` | 1 | A secret key was sent in a query string. Pass it only via `TRANSLIFY_SECRET_KEY` or `translify login`. |
 | `KEY_INVALID` | 2 | The key is not recognised. Check `TRANSLIFY_SECRET_KEY` and `apiUrl`. |
 | `KEY_REVOKED` | 2 | Create a new secret key in Translify. |

@@ -176,4 +176,15 @@ describe('Api', () => {
     expect(fetchImpl.mock.calls[1]![1].headers['content-type']).toBeUndefined();
     expect(fetchImpl.mock.calls[0]![0]).toBe('https://x/api/p');
   });
+
+  it('puts a JSON body', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async () => reply(200, { ok: true }));
+    const api = new Api('https://x/api/', 'sk_abc', fetchImpl);
+    await expect(api.put('/p', { a: 1 })).resolves.toEqual({ ok: true });
+
+    expect(fetchImpl.mock.calls[0]![0]).toBe('https://x/api/p');
+    expect(fetchImpl.mock.calls[0]![1].method).toBe('PUT');
+    expect(fetchImpl.mock.calls[0]![1].headers['content-type']).toBe('application/json');
+    expect(fetchImpl.mock.calls[0]![1].body).toBe('{"a":1}');
+  });
 });

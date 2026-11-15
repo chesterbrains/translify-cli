@@ -2,6 +2,7 @@ import type { Config } from '../config.js';
 import type { Api } from '../http.js';
 import { CliError, EXIT, type ExitCode } from '../errors.js';
 import { toTranslifyLocale } from '../patterns.js';
+import { isMissingRoute } from './get.js';
 import { renderLint } from '../render.js';
 
 /** The server's `GET /cli/v1/lint` body (BE lint spec §2.3). */
@@ -68,14 +69,6 @@ export const parseMaxWarnings = (raw: string | undefined): number | undefined =>
   if (!/^\d+$/.test(raw)) throw new CliError(EXIT.failed, '--max-warnings must be a whole number, 0 or more.');
 
   return Number(raw);
-};
-
-/** Nest's own 404 for an unknown route has no `code`; every CLI error the server sends has one. */
-const isMissingRoute = (error: unknown): boolean => {
-  if (!(error instanceof CliError) || typeof error.details !== 'object' || error.details === null) return false;
-  const body = error.details as { statusCode?: unknown; code?: unknown };
-
-  return body.statusCode === 404 && body.code === undefined;
 };
 
 export async function runLint(opts: LintOptions, deps: LintDeps): Promise<ExitCode> {

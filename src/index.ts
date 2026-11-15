@@ -2,6 +2,7 @@
 import { checkbox, confirm, input, password } from '@inquirer/prompts';
 import { Command, Option } from 'commander';
 
+import { runGet, type GetOptions } from './commands/get.js';
 import { runInit, type WhoamiInfo } from './commands/init.js';
 import { LINT_SEVERITIES, parseMaxWarnings, runLint, type LintOptions } from './commands/lint.js';
 import { runLogin } from './commands/login.js';
@@ -175,6 +176,15 @@ program
   .action(async (opts: LintOptions) => {
     parseMaxWarnings(opts.maxWarnings);
     process.exitCode = await runLint(opts, { ...(await withApi()), out });
+  });
+
+program
+  .command('get <key> [locale]')
+  .description('Read one key from Translify: every locale, or one raw value')
+  .option('--namespace <ns>', 'the key\'s namespace (default: the one translify.json names)')
+  .option('--json', 'machine-readable output')
+  .action(async (key: string, locale: string | undefined, opts: GetOptions) => {
+    process.exitCode = await runGet(key, locale, opts, { ...(await withApi()), out, err });
   });
 
 try {
