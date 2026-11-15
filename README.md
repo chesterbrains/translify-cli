@@ -902,7 +902,7 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `PROJECT_ARCHIVED` | 1 | The project is archived; unarchive it in Translify. |
 | `KEY_NOT_FOUND` | 1 | The key does not exist in this project (or is in the trash). Check the name and `--namespace`. |
 | `NAMESPACE_AMBIGUOUS` | 1 | The key exists in several namespaces. Re-run with `--namespace <ns>`. |
-| `NAMESPACE_REQUIRED` | 1 | The key is new, so say where it lives with `--namespace <ns>`. |
+| `NAMESPACE_REQUIRED` | 1 | The key is new, so say where it lives with `--namespace <ns>`. When the key is in the trash, the message names the namespace to pass. |
 | `SOURCE_REQUIRED` | 1 | A new key needs its source-language text first. Set the default locale's text, then the others. |
 | `KEY_ARCHIVED` | 1 | The key is in the Translify trash. Restore it there, or set its source text to bring it back. |
 | `SECRET_KEY_IN_URL` | 1 | A secret key was sent in a query string. Pass it only via `TRANSLIFY_SECRET_KEY` or `translify login`. |

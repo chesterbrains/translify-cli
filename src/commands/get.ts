@@ -42,14 +42,18 @@ export const isMissingRoute = (error: unknown): boolean => {
   return body.statusCode === 404 && body.code === undefined;
 };
 
-const keyMessage = (key: string, body: { code?: unknown; archived?: unknown; namespaces?: unknown; defaultLocale?: unknown }): string | undefined => {
+const keyMessage = (key: string, body: { code?: unknown; archived?: unknown; namespaces?: unknown; archivedNamespaces?: unknown; defaultLocale?: unknown }): string | undefined => {
   switch (body.code) {
     case 'KEY_NOT_FOUND':
       return `Key '${key}' not found.${body.archived === true ? ' It is in the trash; restore it in Translify or set its source text.' : ''}`;
     case 'NAMESPACE_AMBIGUOUS':
       return `Key '${key}' exists in namespaces ${Array.isArray(body.namespaces) ? body.namespaces.map(String).join(', ') : String(body.namespaces)}. Re-run with --namespace <ns>.`;
     case 'NAMESPACE_REQUIRED':
-      return `'${key}' is a new key: say where it lives with --namespace <ns>.`;
+      return `'${key}' is a new key: say where it lives with --namespace <ns>.${
+        Array.isArray(body.archivedNamespaces) && body.archivedNamespaces.length > 0
+          ? ` It is in the trash in namespace ${body.archivedNamespaces.map(String).join(', ')}: pass --namespace <ns> to restore it.`
+          : ''
+      }`;
     case 'SOURCE_REQUIRED':
       return typeof body.defaultLocale === 'string'
         ? `Key '${key}' does not exist. Set its source text (${body.defaultLocale}) first.`

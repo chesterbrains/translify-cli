@@ -57,6 +57,17 @@ describe('runGet', () => {
     );
   });
 
+  it('the --namespace flag wins over the single configured namespace', async () => {
+    const { get } = await run(RES, 'promo.title', undefined, { namespace: 'checkout' }, config([rule('shop')]));
+    expect(get).toHaveBeenCalledWith('/cli/v1/key', { key: 'promo.title', namespace: 'checkout' });
+  });
+
+  it('the table shows warning in the ISSUES column', async () => {
+    const cells = [{ locale: 'en', isDefault: true, value: 'Hi', status: 'NEEDS_REVIEW', issueSeverity: 'WARNING' as const }];
+    const { out } = await run({ ...RES, cells }, 'promo.title', undefined);
+    expect(out.split('\n').at(-1)).toBe('en      NEEDS_REVIEW  warning  Hi');
+  });
+
   it('the table shows CR, LF and tab as escapes so a row stays on one line', async () => {
     const cells = [{ locale: 'en', isDefault: true, value: 'a\r\nb\tc', status: 'APPROVED', issueSeverity: null }];
     const { out } = await run({ ...RES, cells }, 'promo.title', undefined);
@@ -112,6 +123,15 @@ describe('runGet', () => {
 describe('explainKeyError', () => {
   it.each([
     [{ code: 'NAMESPACE_REQUIRED' }, "'k' is a new key: say where it lives with --namespace <ns>."],
+    [{ code: 'NAMESPACE_REQUIRED', archivedNamespaces: [] }, "'k' is a new key: say where it lives with --namespace <ns>."],
+    [
+      { code: 'NAMESPACE_REQUIRED', archivedNamespaces: ['common'] },
+      "'k' is a new key: say where it lives with --namespace <ns>. It is in the trash in namespace common: pass --namespace <ns> to restore it.",
+    ],
+    [
+      { code: 'NAMESPACE_REQUIRED', archivedNamespaces: ['common', 'shop'] },
+      "'k' is a new key: say where it lives with --namespace <ns>. It is in the trash in namespace common, shop: pass --namespace <ns> to restore it.",
+    ],
     [{ code: 'SOURCE_REQUIRED', defaultLocale: 'en' }, "Key 'k' does not exist. Set its source text (en) first."],
     [
       { code: 'SOURCE_REQUIRED', defaultLocale: null },
