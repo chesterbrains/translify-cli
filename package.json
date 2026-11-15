@@ -1,6 +1,6 @@
 {
   "name": "@chesterbrains/translify-cli",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "Push, pull and publish Translify translations from your repository",
   "license": "MIT",
   "repository": {
@@ -34,6 +34,7 @@
     "@inquirer/prompts": "^8.7.2",
     "commander": "^14.0.3",
     "fast-glob": "^3.3.3",
+    "jsonc-parser": "^3.3.1",
     "picocolors": "^1.1.1",
     "zod": "^4.6.5"
   },

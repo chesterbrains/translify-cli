@@ -2,12 +2,14 @@
 import { checkbox, confirm, input, password } from '@inquirer/prompts';
 import { Command, Option } from 'commander';
 
+import { runGet, type GetOptions } from './commands/get.js';
 import { runInit, type WhoamiInfo } from './commands/init.js';
 import { LINT_SEVERITIES, parseMaxWarnings, runLint, type LintOptions } from './commands/lint.js';
 import { runLogin } from './commands/login.js';
 import { runPublish } from './commands/publish.js';
 import { runPull, type PullOptions } from './commands/pull.js';
 import { PUSH_STATUSES, runPush, type PushOptions } from './commands/push.js';
+import { runSet, type SetOptions } from './commands/set.js';
 import { loadConfig, type Config } from './config.js';
 import { askConfirm } from './confirm.js';
 import { findKey, resolveKey, saveKey } from './credentials.js';
@@ -175,6 +177,34 @@ program
   .action(async (opts: LintOptions) => {
     parseMaxWarnings(opts.maxWarnings);
     process.exitCode = await runLint(opts, { ...(await withApi()), out });
+  });
+
+program
+  .command('get <key> [locale]')
+  .description('Read one key from Translify: every locale, or one raw value')
+  .option('--namespace <ns>', 'the key\'s namespace (default: the one translify.json names)')
+  .option('--json', 'machine-readable output')
+  .action(async (key: string, locale: string | undefined, opts: GetOptions) => {
+    process.exitCode = await runGet(key, locale, opts, { ...(await withApi()), out, err });
+  });
+
+program
+  .command('set <key> <locale> <value>')
+  .description('Write one translation to Translify and patch the local JSON file')
+  .option('--namespace <ns>', "the key's namespace (default: the one translify.json names)")
+  .addOption(new Option('--status <status>', 'status the translation lands in').choices(PUSH_STATUSES))
+  .option('--no-write', 'update Translify only, leave local files alone')
+  .option('--json', 'machine-readable output')
+  .action(async (key: string, locale: string, value: string, opts: SetOptions) => {
+    const readStdin = process.stdin.isTTY
+      ? undefined
+      : async (): Promise<string> => {
+          const chunks: Buffer[] = [];
+          for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
+
+          return Buffer.concat(chunks).toString('utf8');
+        };
+    process.exitCode = await runSet(key, locale, value, opts, { ...(await withApi()), out, err, readStdin });
   });
 
 try {

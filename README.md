@@ -42,7 +42,7 @@ npx translify --help
 
 ## Create a secret key
 
-In Translify, open your project's API keys, create a **secret key** (it starts with `sk_`) and give it the scopes you need: `PULL` to pull and run `status`, `PUSH` to push, `PUBLISH` to publish. The raw key is shown once.
+In Translify, open your project's API keys, create a **secret key** (it starts with `sk_`) and give it the scopes you need: `PULL` to pull, run `status` and `get`, `PUSH` to push and `set`, `PUBLISH` to publish. The raw key is shown once.
 
 Give the key to the CLI in one of two ways:
 
@@ -590,6 +590,8 @@ otherwise the CLI stops before sending anything and names the files involved.
 | `translify status` | Exit 1 if local files differ from Translify |
 | `translify lint` | Exit 6 if translations in Translify have placeholder errors (or too many warnings) |
 | `translify publish <env>` | Publish an environment, e.g. `production` |
+| `translify get <key> [locale]` | Read one key from Translify: every locale, or one raw value (see [Single keys](#single-keys)) |
+| `translify set <key> <locale> <value>` | Write one translation to Translify and patch the local JSON file (see [Single keys](#single-keys)) |
 
 Options:
 
@@ -598,9 +600,87 @@ Options:
 - `pull` and `status`: `--from <working|env:slug>`, `--locale <locale>` (as named on disk), `--namespace <ns>`, `--only-approved`
 - `publish`: `--fail-on-withheld`, `--allow-errors`
 - `lint`: `--namespace <ns>`, `--locale <locale>` (as named on disk), `--severity <error|warning>` (only list cells whose worst issue is this severity; counts and the exit code are unaffected), `--max-warnings <n>`
+- `get`: `--namespace <ns>`, `--json`
+- `set`: `--namespace <ns>`, `--status <draft|needs-review|approved>`, `--no-write` (leave local files alone), `--json`
 - `--namespace <ns>` (one namespace; repeat the command for several)
-- `--json` on `push`, `pull`, `status`, `publish` and `lint`: machine-readable output on stdout
+- `--json` on `push`, `pull`, `status`, `publish`, `lint`, `get` and `set`: machine-readable output on stdout
 - `--debug` (global): print error details and stack traces
+
+## Single keys
+
+`translify get` reads one key from Translify and `translify set` writes one translation, without a full pull or push. Use them for a typo fix, a quick lookup in a script, or a new key you want to try. `get` needs a key with the `PULL` scope, `set` one with `PUSH`.
+
+### get
+
+```sh
+translify get checkout.promo.title        # every locale
+translify get checkout.promo.title fr     # one raw value
+```
+
+Without a locale it prints a table of every enabled locale (the default locale first), with each cell's status, its worst placeholder issue (`error` or `warning`, blank when clean) and its value. Statuses are the server's (`APPROVED`, `NEEDS_REVIEW`, `DRAFT`, `-` for an empty cell) and cells come in the server's order: default locale first, then by locale code. A carriage return, newline or tab in a value is shown as `\r`, `\n` or `\t`, and an empty cell as `(empty)`:
+
+```
+Namespace: app
+Key:       checkout.promo.title
+
+LOCALE  STATUS        ISSUES   VALUE
+en      APPROVED               Save {percent}% today
+de      NEEDS_REVIEW  warning  Sparen Sie heute {percent}%
+es      -                      (empty)
+fr      NEEDS_REVIEW           Économisez {percent}% aujourd'hui
+```
+
+With a locale it prints the raw value and nothing else (no trailing decoration), so it is safe to embed in a script. The locale is named as on disk, like `--locale` on `pull`. An empty cell prints `No <locale> translation for <key>.` on stderr and exits 1; a locale the project has not enabled exits 1 with `Locale <x> is not an enabled locale of this project.`
+
+```sh
+echo "Title: $(translify get checkout.promo.title en)"
+```
+
+`--json` prints the server's answer (`namespace`, `key`, `description`, `cells[]` with `locale`, `isDefault`, `value`, `status`, `issueSeverity`), also when a locale is given (on an empty cell it prints the JSON and still exits 1):
+
+```sh
+translify get checkout.promo.title --json | jq -r '.cells[] | select(.locale=="fr") | .status'
+```
+
+### set
+
+```sh
+translify set checkout.promo.title fr "Économisez {percent}% aujourd'hui"   # fix a typo
+translify set checkout.promo.banner en "Free shipping" --namespace app      # a new key, from the source locale
+```
+
+`set` writes the translation to Translify first, then patches your local file (see below), and prints one line such as `Updated checkout.promo.title (fr) in namespace app. Status: needs-review.` (`Created` for a new key, `Restored` for one brought back from the trash, `Unchanged` when the value was already there). Placeholder problems are listed as `warning:` lines, and the output notes when approved translations went back to review because the source text changed.
+
+- **A new key must be set in the source locale first.** Setting a new key straight in a target locale is refused with `Set its source text (<locale>) first.`, whether or not you pass `--namespace`. Set the source text, then the other locales.
+- **Namespace.** `--namespace <ns>` wins; else the one namespace your `translify.json` rules name (when every rule has the same fixed `namespace`); else the server looks the key up. A key that exists in several namespaces is refused, and the error lists them. A new key with no namespace to land in is refused: pass `--namespace`.
+- **The value is sent exactly as your shell passes it.** Quoting is your shell's job: `$`, backticks and `!` may be expanded inside double quotes. Escape quotes you want in the text, as in `translify set auth.login en "Press \"Enter\""`.
+- **A value starting with `-`** is read as an option unless you put the options first and `--` before the value: `translify set discount.label en --no-write -- "-5%"`. Options placed after `--` are taken as more arguments and rejected.
+- **A value from stdin:** pass `-` as the value and pipe the text in. One trailing newline is dropped; nothing else is changed.
+
+  ```sh
+  printf '%s' "$TEXT" | translify set auth.login en -
+  ```
+
+- An empty value is refused: clearing a translation is done in Translify.
+- **Rate limit.** The server allows 120 requests per minute per secret key. When it answers `RATE_LIMITED` the CLI waits (honouring `Retry-After`) and retries up to 3 times. A script that sets hundreds of keys will be slowed down by this; use `translify push` for bulk changes.
+- **Run `set` commands one after another, not in parallel, when they touch the same file.** The server keeps every value, but two simultaneous local patches can lose one; `translify pull` repairs it.
+
+#### Review
+
+Like `push`, a target-locale translation lands as **needs-review** when the project has **Require review** on, and approved otherwise; the source locale is always approved. `--status draft`, `--status needs-review` or `--status approved` picks the status explicitly (the same `REVIEW_DISABLED` refusal applies as for `push`). With review on, an `--status approved` request for a translation with placeholder errors lands `needs-review`, and the output says so.
+
+#### Local files
+
+After the server accepts the write, `set` updates the file for that locale and namespace, unless you pass `--no-write`:
+
+- Only rules with `"format": "json"` are patched. For any other format `set` prints a hint to run `translify pull` and touches nothing; when no rule covers the locale and namespace it prints `No files rule covers <locale>/<namespace>; nothing written locally.`
+- A path that resolves outside the project directory is refused (`Refusing to write <path>: it resolves outside the project directory.`), as in `pull`, and nothing is written. The same goes for a server answer for another locale or namespace than the one you asked for.
+- The existing entry is replaced in place, leaving the rest of the file as it was. A new entry is inserted: with `"jsonStyle": "nested"` (the default) missing parent objects are created, with `"flat"` one dotted key is added. The entry goes in sorted position when the file is already sorted the way `pull` writes it, else at the end of its object.
+- A file that does not exist yet is created, with its folders. It holds only that one key: run `translify pull` for the whole file.
+- A file that is not valid JSON is left untouched, with a hint to run `translify pull`.
+- A value on the key's path in a nested file (a key `a.b` when `a` is a string, or `a.b` is an object) is not overwritten: nothing is written locally, because a nested JSON file cannot hold both. Set `"jsonStyle": "flat"` on that files rule to keep both keys.
+- A name that appears twice on the key's path (JSON keeps only the last) leaves the file untouched: fix the file, then run `translify pull`.
+- A local problem never fails the command: the server already holds the write, so `set` still exits 0. `--json` prints `{ "response": …, "file": { "path", "action", "reason"? } }` so a script can see what happened to the file.
 
 ## Conflict rules
 
@@ -820,6 +900,11 @@ The server's error `code` decides the exit code first; the HTTP status is only u
 | `BAD_REQUEST` | 1 | The request was malformed. Re-run with `--debug` for the server's message. |
 | `ENVIRONMENT_NOT_FOUND` / `ENVIRONMENT_ARCHIVED` | 1 | Check the environment slug passed to `publish` or `--from env:<slug>`, and that it is not archived. |
 | `PROJECT_ARCHIVED` | 1 | The project is archived; unarchive it in Translify. |
+| `KEY_NOT_FOUND` | 1 | The key does not exist in this project (or is in the trash). Check the name and `--namespace`. |
+| `NAMESPACE_AMBIGUOUS` | 1 | The key exists in several namespaces. Re-run with `--namespace <ns>`. |
+| `NAMESPACE_REQUIRED` | 1 | The key is new, so say where it lives with `--namespace <ns>`. |
+| `SOURCE_REQUIRED` | 1 | A new key needs its source-language text first. Set the default locale's text, then the others. |
+| `KEY_ARCHIVED` | 1 | The key is in the Translify trash. Restore it there, or set its source text to bring it back. |
 | `SECRET_KEY_IN_URL` | 1 | A secret key was sent in a query string. Pass it only via `TRANSLIFY_SECRET_KEY` or `translify login`. |
 | `KEY_INVALID` | 2 | The key is not recognised. Check `TRANSLIFY_SECRET_KEY` and `apiUrl`. |
 | `KEY_REVOKED` | 2 | Create a new secret key in Translify. |

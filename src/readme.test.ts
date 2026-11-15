@@ -42,6 +42,17 @@ describe('README', () => {
     }
   });
 
+  it('documents get and set with every flag, the stdin form and the quoting note', () => {
+    const commands: string = section('Commands');
+    for (const needle of ['translify get <key> [locale]', 'translify set <key> <locale> <value>', '--namespace', '--status', '--no-write', '--json']) {
+      expect(commands, needle).toContain(needle);
+    }
+    const single: string = section('Single keys');
+    for (const needle of ['| translify set', '-- "-5%"', 'your shell', 'JSON', 'translify pull', 'needs-review', '$(translify get', '120 requests per minute', 'Set its source text', '--no-write', 'jsonStyle', 'outside the project directory', 'one after another']) {
+      expect(single, needle).toContain(needle);
+    }
+  });
+
   it('documents the two iOS rules, the identifier-key rule and the stringsdict-wins note', () => {
     const ios: string = section('iOS (.strings / .stringsdict)');
 

@@ -25,7 +25,7 @@ export const PUSH_STATUSES = ['draft', 'needs-review', 'approved'] as const;
 export type PushStatusFlag = (typeof PUSH_STATUSES)[number];
 export type TranslationStatus = 'DRAFT' | 'NEEDS_REVIEW' | 'APPROVED';
 
-const WIRE_STATUS: Record<PushStatusFlag, TranslationStatus> = {
+export const WIRE_STATUS: Record<PushStatusFlag, TranslationStatus> = {
   draft: 'DRAFT',
   'needs-review': 'NEEDS_REVIEW',
   approved: 'APPROVED',
