@@ -78,6 +78,16 @@ const runFailing = (error: unknown, key: string, locale: string, value: string) 
 
 
 describe('runSet', () => {
+  it('a local read/write failure after the server accepted: exit 0, a skipped io outcome', async () => {
+    await mkdir(join(dir, 'locales/en/common.json'), { recursive: true });
+    const { code, out } = await run('promo.title', 'en', 'Hello', {}, res());
+    expect(code).toBe(EXIT.ok);
+    expect(out.at(-1)).toMatch(/^Could not write locales\/en\/common\.json:/);
+    const json = await run('promo.title', 'en', 'Hello', { json: true }, res());
+    expect(json.code).toBe(EXIT.ok);
+    expect(JSON.parse(json.out[0]!).file).toEqual({ path: 'locales/en/common.json', action: 'skipped', reason: 'io' });
+  });
+
   it('writes the server, then patches the one entry', async () => {
     await write('locales/en/common.json', '{\n  "promo": {\n    "title": "Old"\n  }\n}\n');
     const { code, out, put } = await run('promo.title', 'en', 'Limited offer', {}, res({ namespace: 'common' }));
