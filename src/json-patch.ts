@@ -24,6 +24,7 @@ export function pullOrder(a: string, b: string): number {
 
 interface Property {
   name: string;
+  key: Node;
   value: Node;
 }
 
@@ -31,7 +32,7 @@ const propertiesOf = (object: Node): Property[] =>
   (object.children ?? []).flatMap((property) => {
     const [name, value] = property.children ?? [];
 
-    return name !== undefined && value !== undefined && typeof name.value === 'string' ? [{ name: name.value, value }] : [];
+    return name !== undefined && value !== undefined && typeof name.value === 'string' ? [{ name: name.value, key: name, value }] : [];
   });
 
 type Search = { found: 'leaf'; value: Node } | { found: 'blocked' } | { found: 'none' };
@@ -71,6 +72,51 @@ function formattingOf(text: string): FormattingOptions {
 const nest = (segments: string[], value: string): unknown =>
   segments.reduceRight<unknown>((inner, segment) => ({ [segment]: inner }), value);
 
+const hasBreak = (text: string): boolean => /[\r\n]/.test(text);
+
+/**
+ * An object written on one line keeps its compact form: the entry is inserted by hand with the separators the
+ * object already uses, so no other byte moves. An empty object is inline only in a document with no line break.
+ */
+function inlineEdit(
+  body: string,
+  parent: Node,
+  properties: Property[],
+  added: string[],
+  value: string,
+  insertAt: number,
+): Edit | undefined {
+  const first = properties[0];
+  const inline = first === undefined ? !body.includes('\n') : !hasBreak(body.slice(parent.offset, parent.offset + parent.length));
+
+  if (!inline) return undefined;
+
+  const colon = first === undefined ? ':' : body.slice(first.key.offset + first.key.length, first.value.offset);
+  const second = properties[1];
+  const comma =
+    first !== undefined && second !== undefined
+      ? body.slice(first.value.offset + first.value.length, second.key.offset)
+      : colon.endsWith(' ')
+        ? ', '
+        : ',';
+  const render = (segments: string[]): string => {
+    const [head, ...tail] = segments as [string, ...string[]];
+
+    return `${JSON.stringify(head)}${colon}${tail.length === 0 ? JSON.stringify(value) : `{${render(tail)}}`}`;
+  };
+  const entry = render(added);
+
+  if (first === undefined) return { offset: parent.offset, length: parent.length, content: `{${entry}}` };
+
+  const before = properties[insertAt];
+
+  if (before !== undefined) return { offset: before.key.offset, length: 0, content: entry + comma };
+
+  const last = properties[properties.length - 1] as Property;
+
+  return { offset: last.value.offset + last.value.length, length: 0, content: comma + entry };
+}
+
 export function patchJson(text: string | undefined, key: string, value: string, style: 'nested' | 'flat'): PatchResult {
   if (text === undefined) {
     const tree = style === 'nested' ? nest(key.split('.'), value) : { [key]: value };
@@ -104,20 +150,28 @@ export function patchJson(text: string | undefined, key: string, value: string, 
 
   for (let index = 0; index < segments.length - 1; index++) {
     const segment = segments[index] as string;
-    const next = propertiesOf(parent).find((property) => property.name === segment)?.value;
+    const matches = propertiesOf(parent).filter((property) => property.name === segment);
+    const next = matches[0]?.value;
 
     if (next === undefined) break;
     existing.push(segment);
+    // JSON.parse keeps the last duplicate, so an entry added to the first would be invisible to the server.
+    if (matches.length > 1) return { action: 'skipped', reason: 'blocked', at: existing.join('.') };
     if (next.type !== 'object') return { action: 'skipped', reason: 'blocked', at: existing.join('.') };
     parent = next;
   }
 
   const added = segments.slice(existing.length);
   const first = added[0] as string;
-  const names = propertiesOf(parent).map((property) => property.name);
+  const properties = propertiesOf(parent);
+  const names = properties.map((property) => property.name);
   const sorted = names.every((name, index) => index === 0 || pullOrder(names[index - 1] as string, name) <= 0);
   const position = sorted ? names.findIndex((name) => pullOrder(name, first) > 0) : -1;
   const insertAt = position === -1 ? names.length : position;
+
+  const inline = inlineEdit(body, parent, properties, added, value, insertAt);
+
+  if (inline !== undefined) return { action: 'patched', text: bom + applyEdits(body, [inline]) };
 
   const edits = modify(body, [...existing, first], nest(added.slice(1), value), {
     formattingOptions: formattingOf(body),

@@ -74,4 +74,41 @@ describe('patchJson', () => {
     expect(patched(patchJson('{}\n', 'a', 'v', 'flat'))).toBe(pulled({ a: 'v' }));
     expect(patched(patchJson('{\n  "a": {}\n}\n', 'a.b', 'v', 'nested'))).toBe(pulled({ a: { b: 'v' } }));
   });
+
+  it('keeps a minified document minified on insert and replace', () => {
+    expect(patched(patchJson('{"a":"1","c":"3"}', 'b', '2', 'flat'))).toBe('{"a":"1","b":"2","c":"3"}');
+    expect(patched(patchJson('{"a":"1","c":"3"}', 'z', '2', 'flat'))).toBe('{"a":"1","c":"3","z":"2"}');
+    expect(patched(patchJson('{"c":"3","a":"1"}', 'b', '2', 'flat'))).toBe('{"c":"3","a":"1","b":"2"}');
+    expect(patched(patchJson('{ "a": "1", "c": "3" }', 'b', '2', 'flat'))).toBe('{ "a": "1", "b": "2", "c": "3" }');
+    expect(patched(patchJson('{"a":"1"}', 'b.c.d', 'v', 'nested'))).toBe('{"a":"1","b":{"c":{"d":"v"}}}');
+    expect(patched(patchJson('{}', 'b', '2', 'flat'))).toBe('{"b":"2"}');
+    expect(patched(patchJson('{"a":"1","b":"2"}', 'a', 'x', 'flat'))).toBe('{"a":"x","b":"2"}');
+  });
+
+  it('keeps an inline object inline inside a multi-line file', () => {
+    const text = '{\n  "a": {"x": "1", "z": "3"},\n  "b": "2"\n}\n';
+    expect(patched(patchJson(text, 'a.y', 'v', 'nested'))).toBe('{\n  "a": {"x": "1", "y": "v", "z": "3"},\n  "b": "2"\n}\n');
+  });
+
+  it('refuses to insert below a parent name that occurs twice', () => {
+    const text = '{"a":{"x":"1"},"a":{"y":"2"}}';
+    expect(patchJson(text, 'a.z', 'v', 'nested')).toEqual({ action: 'skipped', reason: 'blocked', at: 'a' });
+  });
+
+  it('pins dotted-prefix coexistence: the server reads a.b and a.b.c as distinct keys', () => {
+    // {"a":"x"} + flat a.b: two distinct keys on the server.
+    expect(patched(patchJson(pulled({ a: 'x' }), 'a.b', 'v', 'flat'))).toBe(pulled({ a: 'x', 'a.b': 'v' }));
+    // {"a.b":"x"} + nested a.b.c: distinct keys, so the nested branch is added beside the dotted one.
+    expect(patched(patchJson(pulled({ 'a.b': 'x' }), 'a.b.c', 'v', 'nested'))).toBe(pulled({ a: { b: { c: 'v' } }, 'a.b': 'x' }));
+    // {"a.b":"x"} + flat a.b.c: distinct keys again.
+    expect(patched(patchJson(pulled({ 'a.b': 'x' }), 'a.b.c', 'v', 'flat'))).toBe(pulled({ 'a.b': 'x', 'a.b.c': 'v' }));
+  });
+
+  it('with a leaf and an object both matching the key, the leaf wins whatever the order', () => {
+    // An object at the same path is not a key on the server; the leaf is.
+    const objectLast = '{\n  "a.b": "old",\n  "a": {\n    "b": {\n      "c": "1"\n    }\n  }\n}\n';
+    const objectFirst = '{\n  "a": {\n    "b": {\n      "c": "1"\n    }\n  },\n  "a.b": "old"\n}\n';
+    expect(patched(patchJson(objectLast, 'a.b', 'new', 'nested'))).toBe(objectLast.replace('"old"', '"new"'));
+    expect(patched(patchJson(objectFirst, 'a.b', 'new', 'nested'))).toBe(objectFirst.replace('"old"', '"new"'));
+  });
 });
