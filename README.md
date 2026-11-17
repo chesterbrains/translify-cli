@@ -677,6 +677,8 @@ Before sending anything, `set` checks that the local JSON file can take the entr
 - a value sits on the key's path in a nested file (a key `a.b` when `a` is a string, or `a.b` is an object): a nested JSON file cannot hold both. Set `"jsonStyle": "flat"` on that files rule to keep both keys;
 - a name appears twice on the key's path (JSON keeps only the last): fix the file.
 
+With `--json` a refusal also prints `{ "response": null, "file": { "path", "action": "skipped", "reason" } }` on stdout (`reason` is `invalid`, `blocked` or `ambiguous`); the message still goes to stderr. When the namespace was not named and the file is simply the only one for that locale, the message adds a hint to pass `--namespace`, in case the key belongs to a namespace with no file here.
+
 `--no-write` skips the check and updates Translify only. The check needs to know the file: when neither `--namespace` nor the config names the namespace and several files exist for the locale, it is skipped and the same problem is reported after the write instead (see below).
 
 After the server accepts the write, `set` updates the file for that locale and namespace, unless you pass `--no-write`:
