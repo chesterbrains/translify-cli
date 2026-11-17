@@ -671,16 +671,21 @@ Like `push`, a target-locale translation lands as **needs-review** when the proj
 
 #### Local files
 
+Before sending anything, `set` checks that the local JSON file can take the entry. When it cannot, the command stops with exit code 1: nothing is sent to Translify and nothing is written, so the server and the file never end up out of step. It refuses when:
+
+- the file is not valid JSON (fix it, or run `translify pull`);
+- a value sits on the key's path in a nested file (a key `a.b` when `a` is a string, or `a.b` is an object): a nested JSON file cannot hold both. Set `"jsonStyle": "flat"` on that files rule to keep both keys;
+- a name appears twice on the key's path (JSON keeps only the last): fix the file.
+
+`--no-write` skips the check and updates Translify only. The check needs to know the file: when neither `--namespace` nor the config names the namespace and several files exist for the locale, it is skipped and the same problem is reported after the write instead (see below).
+
 After the server accepts the write, `set` updates the file for that locale and namespace, unless you pass `--no-write`:
 
 - Only rules with `"format": "json"` are patched. For any other format `set` prints a hint to run `translify pull` and touches nothing; when no rule covers the locale and namespace it prints `No files rule covers <locale>/<namespace>; nothing written locally.`
 - A path that resolves outside the project directory is refused (`Refusing to write <path>: it resolves outside the project directory.`), as in `pull`, and nothing is written. The same goes for a server answer for another locale or namespace than the one you asked for.
 - The existing entry is replaced in place, leaving the rest of the file as it was. A new entry is inserted: with `"jsonStyle": "nested"` (the default) missing parent objects are created, with `"flat"` one dotted key is added. The entry goes in sorted position when the file is already sorted the way `pull` writes it, else at the end of its object.
 - A file that does not exist yet is created, with its folders. It holds only that one key: run `translify pull` for the whole file.
-- A file that is not valid JSON is left untouched, with a hint to run `translify pull`.
-- A value on the key's path in a nested file (a key `a.b` when `a` is a string, or `a.b` is an object) is not overwritten: nothing is written locally, because a nested JSON file cannot hold both. Set `"jsonStyle": "flat"` on that files rule to keep both keys.
-- A name that appears twice on the key's path (JSON keeps only the last) leaves the file untouched: fix the file, then run `translify pull`.
-- A local problem never fails the command: the server already holds the write, so `set` still exits 0. `--json` prints `{ "response": …, "file": { "path", "action", "reason"? } }` so a script can see what happened to the file.
+- A local problem found after the write (the check was skipped, the file changed in the meantime, or it could not be written) never fails the command: the server already holds the write, so `set` exits 0 and says what happened. `--json` prints `{ "response": …, "file": { "path", "action", "reason"? } }` so a script can see what happened to the file.
 
 ## Conflict rules
 

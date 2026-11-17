@@ -156,33 +156,82 @@ describe('runSet', () => {
     expect(restored.out[0]).toBe('Restored k (en) in namespace common. Status: approved.');
   });
 
-  it.each([
-    ['a broken file', '{ "a": ', 'locales/en/common.json is not valid JSON; run `translify pull` to sync the file.'],
+  const TAIL = 'Nothing was sent to Translify and nothing was written.';
+  const BROKEN: [string, string, string, string][] = [
+    ['a broken file', '{ "a": ', 'invalid', `locales/en/common.json is not valid JSON. ${TAIL} Fix the file or run \`translify pull\`, or pass --no-write to update Translify only.`],
     [
       'a blocked path',
       '{\n  "promo": "text"\n}\n',
-      'locales/en/common.json holds a value at "promo", and a nested JSON file cannot keep "promo.title" beside it; nothing written locally. Set "jsonStyle": "flat" on this files rule to keep both.',
+      'blocked',
+      `locales/en/common.json holds a value at "promo", and a nested JSON file cannot keep "promo.title" beside it. ${TAIL} Set "jsonStyle": "flat" on this files rule to keep both, or pass --no-write to update Translify only.`,
     ],
     [
       'an ambiguous path',
       '{"promo":{"a":"1"},"promo":{"b":"2"}}',
-      'locales/en/common.json has "promo" more than once; fix the file, then run `translify pull`.',
+      'ambiguous',
+      `locales/en/common.json has "promo" more than once. ${TAIL} Fix the file, or pass --no-write to update Translify only.`,
     ],
-  ])('%s: the server write stands, the file is untouched, exit 0', async (_name, text, line) => {
+  ];
+
+  it.each(BROKEN)('%s is refused before the request: nothing sent, file untouched, exit 1', async (_name, text, _reason, line) => {
     await write('locales/en/common.json', text);
-    const { code, out } = await run('promo.title', 'en', 'Hi', {}, res());
-    expect(code).toBe(EXIT.ok);
-    expect(out.at(-1)).toBe(line);
+    const put = vi.fn();
+    const deps: SetDeps = { cwd: dir, config: config(), api: { put, get: vi.fn() } as never, out: () => undefined, err: () => undefined, readStdin: undefined };
+    const error = await runSet('promo.title', 'en', 'Hi', { json: true }, deps).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).exitCode).toBe(EXIT.failed);
+    expect((error as CliError).message).toBe(line);
+    expect(put).not.toHaveBeenCalled();
     expect(await read('locales/en/common.json')).toBe(text);
   });
 
-  it('--json names the reason of a skipped patch', async () => {
-    await write('locales/en/common.json', '{"promo":{"a":"1"},"promo":{"b":"2"}}');
-    const ambiguous = await run('promo.title', 'en', 'Hi', { json: true }, res());
-    expect(JSON.parse(ambiguous.out[0]!).file).toEqual({ path: 'locales/en/common.json', action: 'skipped', reason: 'ambiguous' });
+  it('the check covers both directions and a known namespace; a flat rule holds both keys', async () => {
+    const pinned = config([rule({ namespace: 'common' })]);
+    await write('locales/en/common.json', '{\n  "promo": {\n    "title": "x"\n  }\n}\n');
+    const put = vi.fn();
+    const deps: SetDeps = { cwd: dir, config: pinned, api: { put, get: vi.fn() } as never, out: () => undefined, err: () => undefined, readStdin: undefined };
+    await expect(runSet('promo', 'en', 'Hi', {}, deps)).rejects.toThrow(/holds a value at "promo"/);
+    expect(put).not.toHaveBeenCalled();
+
+    const flat = config([rule({ jsonStyle: 'flat' })]);
+    await write('locales/en/common.json', '{\n  "promo": "text"\n}\n');
+    const ok = await run('promo.title', 'en', 'Hi', {}, res(), flat);
+    expect(ok.code).toBe(EXIT.ok);
+    expect(JSON.parse(await read('locales/en/common.json'))).toEqual({ promo: 'text', 'promo.title': 'Hi' });
+  });
+
+  it('--no-write skips the check', async () => {
     await write('locales/en/common.json', '{"promo":"x"}');
-    const blocked = await run('promo.title', 'en', 'Hi', { json: true }, res());
-    expect(JSON.parse(blocked.out[0]!).file.reason).toBe('blocked');
+    const { code, put } = await run('promo.title', 'en', 'Hi', { write: false }, res());
+    expect(code).toBe(EXIT.ok);
+    expect(put).toHaveBeenCalledTimes(1);
+  });
+
+  it('a namespace only the server can name, with several files for the locale, is not checked: the write stands, exit 0', async () => {
+    await write('locales/en/common.json', '{"promo":"x"}');
+    await write('locales/en/other.json', '{}');
+    const { code, out, put } = await run('promo.title', 'en', 'Hi', {}, res());
+    expect(code).toBe(EXIT.ok);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(out.at(-1)).toBe(
+      'locales/en/common.json holds a value at "promo", and a nested JSON file cannot keep "promo.title" beside it; nothing written locally. Set "jsonStyle": "flat" on this files rule to keep both.',
+    );
+    const json = await run('promo.title', 'en', 'Hi', { json: true }, res());
+    expect(JSON.parse(json.out[0]!).file).toEqual({ path: 'locales/en/common.json', action: 'skipped', reason: 'blocked' });
+  });
+
+  it.each(BROKEN)('%s that appears between the check and the write: the server write stands, exit 0', async (_name, text, reason) => {
+    await write('locales/en/common.json', '{}\n');
+    const put = vi.fn().mockImplementation(async () => {
+      await write('locales/en/common.json', text);
+
+      return res();
+    });
+    const out: string[] = [];
+    const deps: SetDeps = { cwd: dir, config: config(), api: { put, get: vi.fn() } as never, out: (l) => out.push(l), err: () => undefined, readStdin: undefined };
+    expect(await runSet('promo.title', 'en', 'Hi', { json: true }, deps)).toBe(EXIT.ok);
+    expect(JSON.parse(out[0]!).file).toEqual({ path: 'locales/en/common.json', action: 'skipped', reason });
+    expect(await read('locales/en/common.json')).toBe(text);
   });
 
   it('a response path that resolves outside the project is refused: no read, no write', async () => {
