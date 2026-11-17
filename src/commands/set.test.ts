@@ -173,14 +173,16 @@ describe('runSet', () => {
     ],
   ];
 
-  it.each(BROKEN)('%s is refused before the request: nothing sent, file untouched, exit 1', async (_name, text, _reason, line) => {
+  it.each(BROKEN)('%s is refused before the request: nothing sent, file untouched, exit 1, --json names the reason', async (_name, text, reason, line) => {
     await write('locales/en/common.json', text);
     const put = vi.fn();
-    const deps: SetDeps = { cwd: dir, config: config(), api: { put, get: vi.fn() } as never, out: () => undefined, err: () => undefined, readStdin: undefined };
+    const out: string[] = [];
+    const deps: SetDeps = { cwd: dir, config: config(), api: { put, get: vi.fn() } as never, out: (l) => out.push(l), err: () => undefined, readStdin: undefined };
     const error = await runSet('promo.title', 'en', 'Hi', { json: true }, deps).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(CliError);
     expect((error as CliError).exitCode).toBe(EXIT.failed);
-    expect((error as CliError).message).toBe(line);
+    expect((error as CliError).message).toBe(`${line} If "promo.title" belongs to another namespace, name it with --namespace.`);
+    expect(out).toEqual([JSON.stringify({ response: null, file: { path: 'locales/en/common.json', action: 'skipped', reason } })]);
     expect(put).not.toHaveBeenCalled();
     expect(await read('locales/en/common.json')).toBe(text);
   });
@@ -189,8 +191,14 @@ describe('runSet', () => {
     const pinned = config([rule({ namespace: 'common' })]);
     await write('locales/en/common.json', '{\n  "promo": {\n    "title": "x"\n  }\n}\n');
     const put = vi.fn();
-    const deps: SetDeps = { cwd: dir, config: pinned, api: { put, get: vi.fn() } as never, out: () => undefined, err: () => undefined, readStdin: undefined };
-    await expect(runSet('promo', 'en', 'Hi', {}, deps)).rejects.toThrow(/holds a value at "promo"/);
+    const out: string[] = [];
+    const deps: SetDeps = { cwd: dir, config: pinned, api: { put, get: vi.fn() } as never, out: (l) => out.push(l), err: () => undefined, readStdin: undefined };
+    const error = await runSet('promo', 'en', 'Hi', {}, deps).catch((e: unknown) => e);
+    // The namespace is known, so no --namespace hint; without --json nothing goes to stdout.
+    expect((error as CliError).message).toBe(
+      'locales/en/common.json has "promo" as something other than a text entry (usually an object holding other keys), and a nested JSON file cannot also keep "promo" as a key. Nothing was sent to Translify and nothing was written. Set "jsonStyle": "flat" on this files rule to keep both, or pass --no-write to update Translify only.',
+    );
+    expect(out).toEqual([]);
     expect(put).not.toHaveBeenCalled();
 
     const flat = config([rule({ jsonStyle: 'flat' })]);
