@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -55,8 +55,10 @@ export async function lockFolder(base: string = tmpdir(), uid: number | null = p
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const info = await lstat(folder);
   if (!info.isDirectory() || (uid !== null && info.uid !== uid)) {
-    throw new Error(`${folder} is not a folder owned by this user; remove it and try again`);
+    throw new Error(`${folder} is not a folder owned by this user; remove it, or point TMPDIR at a folder of your own`);
   }
+  // Left open by an earlier umask or by hand: close it again.
+  if (uid !== null && (info.mode & 0o077) !== 0) await chmod(folder, 0o700);
 
   return folder;
 }

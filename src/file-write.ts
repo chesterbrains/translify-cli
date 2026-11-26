@@ -90,14 +90,17 @@ export interface AtomicWriteOptions {
   sync?: boolean;
   /** Test seam for the rename. */
   move?: typeof rename;
+  /** Test seam for opening the temp file. */
+  openFile?: typeof open;
 }
 
-async function writeTemp(temp: string, content: string | Uint8Array, sync: boolean): Promise<void> {
+async function writeTemp(temp: string, content: string | Uint8Array, sync: boolean, openFile: typeof open = open): Promise<void> {
   if (!sync) return writeFile(temp, content, { flag: 'wx' });
-  const handle: FileHandle = await open(temp, 'wx');
+  const handle: FileHandle = await openFile(temp, 'wx');
   try {
     await handle.writeFile(content);
-    await handle.sync();
+    // Durability is a bonus: a filesystem without fsync must not cost the write.
+    await handle.sync().catch(() => undefined);
   } finally {
     await handle.close();
   }
@@ -122,11 +125,16 @@ export async function writeFileAtomic(path: string, content: string | Uint8Array
   } catch (error) {
     if (!missing(error)) throw error;
   }
-  if (links > 1) return writeFile(target, content);
+  if (links > 1) {
+    await writeFile(target, content);
+    if (options.sweep === true) await sweepTemps(target, Date.now());
+
+    return;
+  }
 
   const temp: string = join(dirname(target), `.${basename(target)}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
   try {
-    await writeTemp(temp, content, options.sync === true);
+    await writeTemp(temp, content, options.sync === true, options.openFile);
     // Explicitly, because the mode given at creation is cut down by the umask. Some mounts refuse chmod; the write still counts.
     if (mode !== undefined) await chmod(temp, mode).catch(() => undefined);
     await renameOver(temp, target, process.platform, options.move);

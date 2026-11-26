@@ -330,6 +330,22 @@ describe('runSet', () => {
     expect(await read('locales/en/common.json')).toBe('{}\n');
   });
 
+  it('a file that is mid-write by another set (broken for a moment) is looked at again, not refused', async () => {
+    await write('locales/en/common.json', '{ "a": ');
+    setTimeout(() => void write('locales/en/common.json', '{}\n'), 15);
+    const { code, out, put } = await run('promo.title', 'en', 'Hi', {}, res());
+    expect(code).toBe(EXIT.ok);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(out.at(-1)).toBe('Updated locales/en/common.json.');
+  });
+
+  it('a locale typed in another case than the files on disk patches the existing file', async () => {
+    await write('locales/pt-BR/common.json', '{}\n');
+    const { out } = await run('promo.title', 'pt-br', 'Oi', {}, res({ locale: 'pt-BR' }));
+    expect(out.at(-1)).toBe('Updated locales/pt-BR/common.json.');
+    expect(await readdir(join(dir, 'locales'))).toEqual(['pt-BR']);
+  });
+
   it('a server that spells the locale in another case still gets its file patched; a file named with leading dots is inside the project', async () => {
     const cfg = config([rule({ pattern: '..locales/{locale}/{namespace}.json' })]);
     await write('..locales/pt-BR/common.json', '{}\n');

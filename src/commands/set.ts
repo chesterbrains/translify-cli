@@ -137,6 +137,27 @@ const refusedLine = (patch: { reason: 'invalid' | 'blocked' | 'ambiguous'; at?: 
   }
 };
 
+/** How often, and how far apart, the check looks again before it believes a file is broken or unreadable. */
+const RECHECKS = 3;
+const RECHECK_MS = 40;
+
+/**
+ * The patch the file would get, read without the lock. Another `set` may be writing the file at this very moment
+ * (in place, where a rename is not possible, or with the file briefly unreadable on Windows), so a file that looks
+ * broken or cannot be read is looked at again before that is believed. A read that keeps failing throws.
+ */
+async function judge(absolute: string, key: string, value: string, style: 'nested' | 'flat'): Promise<PatchResult> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const patch: PatchResult = patchJson(await readIfPresent(absolute), key, value, style);
+      if (attempt === RECHECKS || patch.action !== 'skipped' || patch.reason !== 'invalid') return patch;
+    } catch (error) {
+      if (attempt === RECHECKS) throw error;
+    }
+    await new Promise((done) => setTimeout(done, RECHECK_MS));
+  }
+}
+
 /**
  * Before the request: refuse when the local JSON file could not take the entry, so the server and the file never
  * end up out of step. Runs the same patcher as the write, in memory. Anything it cannot judge (no rule, another
@@ -173,9 +194,9 @@ async function preflight(
     const absolute: string | undefined = insideFolder(deps.cwd, target.path);
     if (absolute === undefined) return located;
     path = target.path;
-    let text: string | undefined;
+    const style: 'nested' | 'flat' = target.rule.jsonStyle ?? 'nested';
     try {
-      text = await readIfPresent(absolute);
+      patch = await judge(absolute, key, value, style);
     } catch (error) {
       // A folder at that path, no permission: the patch after the write would fail the same way.
       if (json) deps.out(JSON.stringify({ response: null, file: { path, action: 'skipped', reason: 'io' } }));
@@ -184,7 +205,6 @@ async function preflight(
         `Could not read ${path}: ${message(error)}. Nothing was sent to Translify and nothing was written. Fix the file, or pass --no-write to update Translify only.`,
       );
     }
-    patch = patchJson(text, key, value, target.rule.jsonStyle ?? 'nested');
   }
   if (patch.action === 'skipped') {
     const file: FileOutcome = { path, action: 'skipped', reason: patch.reason };
@@ -215,7 +235,9 @@ async function patchLocal(
       };
     }
     const { context, matches }: Located = known ?? (await locate(deps));
-    const target = targetFile(matches, deps.config, context, sent.locale, res.namespace);
+    // The locale as the files on disk spell it, when the answer and the request differ in case only.
+    const locale: string = matches.find((m) => m.locale.toLowerCase() === sent.locale.toLowerCase())?.locale ?? sent.locale;
+    const target = targetFile(matches, deps.config, context, locale, res.namespace);
     if (target === undefined) {
       return {
         file: { path: null, action: 'skipped', reason: 'no-rule' },

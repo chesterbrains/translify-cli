@@ -5,7 +5,7 @@
 //
 //   node scripts/parallel-set.mjs [total=48] [atOnce=12]
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -76,7 +76,7 @@ async function scenario(name, locale, prepare) {
     const file = JSON.parse(await readFile(join(folder, 'common.json'), 'utf8'));
     const missing = keys.filter((key) => file[key.split('.')[0]]?.title !== `value of ${key}`);
     const failed = results.filter((result) => result.code !== 0 || !/(Updated|Created) locales/.test(result.output));
-    const leftovers = (await readdir(folder)).filter((entry) => entry !== 'common.json');
+    const leftovers = (await readdir(folder)).filter((entry) => entry !== 'common.json' && entry !== 'twin.json');
 
     console.log(`${name}: ${keys.length - missing.length} of ${keys.length} entries, ${failed.length} failed runs, ${leftovers.length} leftover files`);
     for (const result of failed.slice(0, 5)) console.log(`  ${result.key}: exit ${result.code}: ${result.output.trim()}`);
@@ -94,6 +94,12 @@ const results = [
     await writeFile(join(cwd, 'locales', 'en', 'common.json'), '{}\n');
   }),
   await scenario('file and folder created by the first run', 'fr', async () => undefined),
+  // Written in place, not renamed: a reader can catch the file half written, which the pre-flight must ride out.
+  await scenario('file with a second hard link', 'de', async (cwd) => {
+    await mkdir(join(cwd, 'locales', 'de'), { recursive: true });
+    await writeFile(join(cwd, 'locales', 'de', 'common.json'), '{}\n');
+    await link(join(cwd, 'locales', 'de', 'common.json'), join(cwd, 'locales', 'de', 'twin.json'));
+  }),
 ];
 server.close();
 process.exit(results.every(Boolean) ? 0 : 1);

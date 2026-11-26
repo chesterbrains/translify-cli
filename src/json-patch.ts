@@ -49,13 +49,11 @@ const visibleProperties = (object: Node): Property[] => {
 
 type Search = { found: 'leaf'; value: Node } | { found: 'blocked' } | { found: 'ambiguous' } | { found: 'none' };
 
-/** A name JavaScript lists before the others whatever the document order (an array index), so "last" differs between this file and the server. */
-const INTEGER_LIKE = /^(0|[1-9]\d*)$/;
-
 /**
  * Matches the key under any split of its dots; of several leaves the last in document order wins, as in the server's
- * parser. The exception is a clash that involves an integer-like name (`"1.x"` beside `"1": { "x" }`): the server reads
- * those in JavaScript's key order, not the document's, so which one counts cannot be told from here.
+ * parser. The exception: JavaScript lists an array-index name (`"1"`) before every other name whatever the document
+ * says, so when the copy under such a name is not the first one in the document (`"1.x"`, then `"1": { "x" }`) the
+ * server's last differs from the file's, and the file has to be fixed rather than guessed at.
  */
 function search(object: Node, rest: string): Search {
   let leaf: Node | undefined;
@@ -79,7 +77,7 @@ function search(object: Node, rest: string): Search {
     }
   }
 
-  if (leafNames.length > 1 && leafNames.some((name) => INTEGER_LIKE.test(name))) return { found: 'ambiguous' };
+  if (leafNames.slice(1).some(isIndexName)) return { found: 'ambiguous' };
   if (leaf !== undefined) return { found: 'leaf', value: leaf };
 
   return blocked ? { found: 'blocked' } : { found: 'none' };

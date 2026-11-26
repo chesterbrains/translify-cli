@@ -87,8 +87,12 @@ describe('runGet', () => {
   it('a stored empty string is a value, not an empty cell: an empty line, exit 0', async () => {
     // The server never stores '' today; if it ever does, a script must still tell it from "no translation".
     const cells = [{ locale: 'en', isDefault: true, value: '', status: 'APPROVED', issueSeverity: null }];
-    const { code, out, err } = await run({ ...RES, cells }, 'promo.title', 'en');
-    expect([code, out, err]).toEqual([EXIT.ok, '', '']);
+    const out: string[] = [];
+    const err: string[] = [];
+    const deps = { api: { get: vi.fn().mockResolvedValue({ ...RES, cells }) } as never, config: config([rule()]), out: (l: string) => out.push(l), err: (l: string) => err.push(l) };
+    expect(await runGet('promo.title', 'en', {}, deps)).toBe(EXIT.ok);
+    // One line, empty: not the "no translation" case, which prints nothing on stdout and a line on stderr.
+    expect([out, err]).toEqual([[''], []]);
   });
 
   it('a locale that is not a cell is refused', async () => {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -225,7 +225,15 @@ describe('lockFolder', () => {
     await mkdir(join(dir, 'translify-12345'));
     await expect(lockFolder(dir, 12345)).rejects.toThrow(/not a folder owned by this user/);
     await writeFile(join(dir, 'translify-777'), 'x');
-    await expect(lockFolder(dir, 777)).rejects.toBeDefined();
+    await expect(lockFolder(dir, 777)).rejects.toMatchObject({ code: 'EEXIST' });
+  });
+
+  it.skipIf(process.platform === 'win32')('closes a folder of its own that was left open to others', async () => {
+    const folder = join(dir, `translify-${process.getuid?.()}`);
+    await mkdir(folder);
+    await chmod(folder, 0o777);
+    expect(await lockFolder(dir)).toBe(folder);
+    expect((await stat(folder)).mode & 0o777).toBe(0o700);
   });
 
   it('without a uid (Windows) the folder has a fixed name', async () => {
