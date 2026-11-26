@@ -47,25 +47,39 @@ const visibleProperties = (object: Node): Property[] => {
   return [...last.values()];
 };
 
-type Search = { found: 'leaf'; value: Node } | { found: 'blocked' } | { found: 'none' };
+type Search = { found: 'leaf'; value: Node } | { found: 'blocked' } | { found: 'ambiguous' } | { found: 'none' };
 
-/** Matches the key under any split of its dots; of several leaves the last in document order wins, as in the server's parser. */
+/** A name JavaScript lists before the others whatever the document order (an array index), so "last" differs between this file and the server. */
+const INTEGER_LIKE = /^(0|[1-9]\d*)$/;
+
+/**
+ * Matches the key under any split of its dots; of several leaves the last in document order wins, as in the server's
+ * parser. The exception is a clash that involves an integer-like name (`"1.x"` beside `"1": { "x" }`): the server reads
+ * those in JavaScript's key order, not the document's, so which one counts cannot be told from here.
+ */
 function search(object: Node, rest: string): Search {
   let leaf: Node | undefined;
   let blocked = false;
+  const leafNames: string[] = [];
 
   for (const { name, value } of visibleProperties(object)) {
     if (name === rest) {
-      if (value.type === 'string') leaf = value;
-      else blocked = true;
+      if (value.type === 'string') {
+        leaf = value;
+        leafNames.push(name);
+      } else blocked = true;
     } else if (rest.startsWith(`${name}.`) && value.type === 'object') {
       const inner = search(value, rest.slice(name.length + 1));
 
-      if (inner.found === 'leaf') leaf = inner.value;
-      else if (inner.found === 'blocked') blocked = true;
+      if (inner.found === 'ambiguous') return inner;
+      if (inner.found === 'leaf') {
+        leaf = inner.value;
+        leafNames.push(name);
+      } else if (inner.found === 'blocked') blocked = true;
     }
   }
 
+  if (leafNames.length > 1 && leafNames.some((name) => INTEGER_LIKE.test(name))) return { found: 'ambiguous' };
   if (leaf !== undefined) return { found: 'leaf', value: leaf };
 
   return blocked ? { found: 'blocked' } : { found: 'none' };
@@ -146,6 +160,7 @@ export function patchJson(text: string | undefined, key: string, value: string, 
   const hit = search(root, key);
 
   if (hit.found === 'blocked') return { action: 'skipped', reason: 'blocked', at: key };
+  if (hit.found === 'ambiguous') return { action: 'skipped', reason: 'ambiguous', at: key };
 
   if (hit.found === 'leaf') {
     if (hit.value.value === value) return { action: 'unchanged', text };

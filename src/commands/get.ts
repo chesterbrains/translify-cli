@@ -1,6 +1,6 @@
 import type { Config } from '../config.js';
 import { CliError, EXIT, type ExitCode } from '../errors.js';
-import type { Api } from '../http.js';
+import { isMissingRoute, type Api } from '../http.js';
 import { configNamespace } from '../namespace.js';
 import { toTranslifyLocale } from '../patterns.js';
 
@@ -33,14 +33,6 @@ export interface GetDeps {
 }
 
 export const KEY_ROUTES_UNSUPPORTED: string = 'This Translify server does not support get and set yet.';
-
-/** Nest's own 404 for an unknown route has no `code`; every CLI error the server sends has one. */
-export const isMissingRoute = (error: unknown): boolean => {
-  if (!(error instanceof CliError) || typeof error.details !== 'object' || error.details === null) return false;
-  const body = error.details as { statusCode?: unknown; code?: unknown };
-
-  return body.statusCode === 404 && body.code === undefined;
-};
 
 const keyMessage = (key: string, body: { code?: unknown; archived?: unknown; namespaces?: unknown; archivedNamespaces?: unknown; defaultLocale?: unknown }): string | undefined => {
   switch (body.code) {

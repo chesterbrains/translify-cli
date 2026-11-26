@@ -15,3 +15,19 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      - run: pnpm build
+      # Real processes on one file: the lock and the atomic write between separate programs.
+      - run: pnpm test:parallel
+  # The file lock and the atomic write take Windows-only paths (rename onto an open file, a lock name pending
+  # deletion). Windows minutes count double, so this job runs only what differs there.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run src/file-lock.test.ts src/file-write.test.ts src/json-patch.test.ts
+      - run: pnpm build
+      - run: pnpm test:parallel

@@ -233,3 +233,11 @@ export class Api {
     }
   }
 }
+
+/** Nest's own 404 for an unknown route has no `code`; every CLI error the server sends has one. */
+export const isMissingRoute = (error: unknown): boolean => {
+  if (!(error instanceof CliError) || typeof error.details !== 'object' || error.details === null) return false;
+  const body = error.details as { statusCode?: unknown; code?: unknown };
+
+  return body.statusCode === 404 && body.code === undefined;
+};

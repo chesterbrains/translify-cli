@@ -1,10 +1,10 @@
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renameOver, writeFileAtomic } from './file-write.js';
+import { insideFolder, renameOver, writeFileAtomic } from './file-write.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -140,5 +140,39 @@ describe('renameOver', () => {
     const other = failing('ENOSPC', 1);
     await expect(renameOver('a', 'b', 'win32', other)).rejects.toMatchObject({ code: 'ENOSPC' });
     expect(other).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('writeFileAtomic options', () => {
+  it('sync writes the same bytes and leaves no temp file', async () => {
+    const file = join(dir, 'en.json');
+    await writeFileAtomic(file, 'one', { sync: true });
+    await writeFileAtomic(file, 'two', { sync: true });
+    expect(await readFile(file, 'utf8')).toBe('two');
+    expect(await readdir(dir)).toEqual(['en.json']);
+  });
+
+  it.skipIf(process.platform === 'win32')('a file with a second hard link is written in place, so both names keep one content', async () => {
+    const file = join(dir, 'en.json');
+    const twin = join(dir, 'twin.json');
+    await writeFile(file, 'old');
+    await link(file, twin);
+    await writeFileAtomic(file, 'new');
+    expect(await readFile(twin, 'utf8')).toBe('new');
+    expect((await stat(file)).nlink).toBe(2);
+  });
+});
+
+describe('insideFolder', () => {
+  it('judges by path segment, not by the first characters', () => {
+    const root = join(dir, 'project');
+    expect(insideFolder(root, 'locales/en.json')).toBe(join(root, 'locales', 'en.json'));
+    expect(insideFolder(root, '..drafts/en.json')).toBe(join(root, '..drafts', 'en.json'));
+    expect(insideFolder(root, '..en.json')).toBe(join(root, '..en.json'));
+    expect(insideFolder(root, '../en.json')).toBeUndefined();
+    expect(insideFolder(root, '..')).toBeUndefined();
+    expect(insideFolder(root, 'a/../../en.json')).toBeUndefined();
+    expect(insideFolder(root, '.')).toBeUndefined();
+    expect(insideFolder(root, join(dir, 'elsewhere', 'en.json'))).toBeUndefined();
   });
 });

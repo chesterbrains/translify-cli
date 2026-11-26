@@ -132,4 +132,14 @@ describe('patchJson', () => {
     expect(patched(patchJson(objectLast, 'a.b', 'new', 'nested'))).toBe(objectLast.replace('"old"', '"new"'));
     expect(patched(patchJson(objectFirst, 'a.b', 'new', 'nested'))).toBe(objectFirst.replace('"old"', '"new"'));
   });
+
+  it('a clash that involves an integer-like name is ambiguous: the server reads those in another order', () => {
+    // JavaScript lists "1" before "1.x" whatever the document says, so "the last one" differs on the server.
+    for (const text of ['{"1.x":"a","1":{"x":"b"}}', '{"1":{"x":"b"},"1.x":"a"}', '{"n":{"1.x":"a","1":{"x":"b"}}}']) {
+      const key = text.startsWith('{"n"') ? 'n.1.x' : '1.x';
+      expect(patchJson(text, key, 'v', 'nested')).toEqual({ action: 'skipped', reason: 'ambiguous', at: key });
+    }
+    // One copy only, integer-like or not, is still patched.
+    expect(patchJson('{"1":{"x":"b"}}', '1.x', 'v', 'nested')).toMatchObject({ action: 'patched' });
+  });
 });

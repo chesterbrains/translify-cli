@@ -1,10 +1,21 @@
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, chmod, lstat, readdir, readlink, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { access, chmod, lstat, open, readdir, readlink, realpath, rename, rm, stat, writeFile, type FileHandle } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const code = (error: unknown): string | undefined => (error as NodeJS.ErrnoException).code;
 const missing = (error: unknown): boolean => code(error) === 'ENOENT';
+
+/**
+ * The absolute form of `path` when it lies inside `root`, else undefined. Compared by path segment, so a file or
+ * folder whose name merely begins with two dots (`..drafts/en.json`) is inside.
+ */
+export function insideFolder(root: string, path: string): string | undefined {
+  const absolute: string = resolve(root, path);
+  const rel: string = relative(resolve(root), absolute);
+
+  return rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel) ? undefined : absolute;
+}
 
 /**
  * The file a path really names: a symlink is followed, so the link itself is never replaced, also when what it
@@ -75,29 +86,47 @@ async function sweepTemps(target: string, now: number): Promise<void> {
 export interface AtomicWriteOptions {
   /** Also remove this target's temp files left by a crashed run. One folder listing per write, so not for bulk writers. */
   sweep?: boolean;
+  /** Flush the temp file to disk before the rename, so a power cut cannot leave an empty file. One fsync per write, so not for bulk writers. */
+  sync?: boolean;
   /** Test seam for the rename. */
   move?: typeof rename;
+}
+
+async function writeTemp(temp: string, content: string | Uint8Array, sync: boolean): Promise<void> {
+  if (!sync) return writeFile(temp, content, { flag: 'wx' });
+  const handle: FileHandle = await open(temp, 'wx');
+  try {
+    await handle.writeFile(content);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
 }
 
 /**
  * Write through a temp file beside the target, then rename over it: a crash mid-write leaves the old file whole,
  * and a reader never sees half a file. The target's permission bits are kept and a read-only file is refused as
  * a plain write would refuse it. Where the folder or the mount cannot take the temp file or the rename, the file
- * is written in place instead, as before. The folder must exist. Not synced to disk: a power cut can still lose it.
+ * is written in place instead, as before; so is a file with more than one hard link, which a rename would split
+ * from its other names. Owner, ACLs and extended attributes of a replaced file are not carried over. The folder must exist.
  */
 export async function writeFileAtomic(path: string, content: string | Uint8Array, options: AtomicWriteOptions = {}): Promise<void> {
   const target: string = await realTarget(path);
   let mode: number | undefined;
+  let links = 1;
   try {
-    mode = (await stat(target)).mode & 0o777;
+    const info = await stat(target);
+    mode = info.mode & 0o777;
+    links = info.nlink;
     await access(target, constants.W_OK);
   } catch (error) {
     if (!missing(error)) throw error;
   }
+  if (links > 1) return writeFile(target, content);
 
   const temp: string = join(dirname(target), `.${basename(target)}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
   try {
-    await writeFile(temp, content, { flag: 'wx' });
+    await writeTemp(temp, content, options.sync === true);
     // Explicitly, because the mode given at creation is cut down by the umask. Some mounts refuse chmod; the write still counts.
     if (mode !== undefined) await chmod(temp, mode).catch(() => undefined);
     await renameOver(temp, target, process.platform, options.move);
