@@ -1,3 +1,4 @@
+/* global console, process */
 // Runs many `translify set` processes at once against a local fake server and checks that the locale file ends
 // up holding every entry. Real processes, so it covers what the in-process unit tests cannot: the file lock and the
 // atomic write between separate programs, on whatever OS runs it. Needs `pnpm build` first.
