@@ -73,4 +73,44 @@ describe('withFileLock', () => {
     expect(await lockPathFor(join(dir, 'en.json'))).toBe(await lockPathFor(join(dir, 'sub', '..', 'en.json')));
     expect(await lockPathFor(join(dir, 'en.json'))).not.toBe(await lockPathFor(join(dir, 'de.json')));
   });
+
+  it('many waiters on one dead lock: still one holder at a time, and no takeover lock is left', async () => {
+    const file = join(dir, 'en.json');
+    const lock = await lockPathFor(file);
+    await writeFile(lock, 'dead\n');
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
+    let inside = 0;
+    let most = 0;
+    const results = await Promise.all(
+      Array.from({ length: 30 }, () =>
+        withFileLock(
+          file,
+          async () => {
+            most = Math.max(most, ++inside);
+            await new Promise((done) => setTimeout(done, 1));
+            inside--;
+
+            return true;
+          },
+          { waitMs: 5000, staleMs: 2000 },
+        ),
+      ),
+    );
+    expect(results.every((result) => result === true)).toBe(true);
+    expect(most).toBe(1);
+    await expect(readFile(`${lock}.takeover`)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('a takeover lock left by a dead process does not block the takeover for good', async () => {
+    const file = join(dir, 'en.json');
+    const lock = await lockPathFor(file);
+    const old = new Date(Date.now() - 60_000);
+    for (const path of [lock, `${lock}.takeover`]) {
+      await writeFile(path, 'dead\n');
+      await utimes(path, old, old);
+    }
+    expect(await withFileLock(file, async () => 'ran', { waitMs: 2000, staleMs: 1000 })).toBe('ran');
+    await expect(readFile(`${lock}.takeover`)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 });

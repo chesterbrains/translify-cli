@@ -32,10 +32,45 @@ export async function lockPathFor(path: string): Promise<string> {
   return join(tmpdir(), `translify-${createHash('sha256').update(real).digest('hex').slice(0, 32)}.lock`);
 }
 
+const ageOf = async (path: string): Promise<number | undefined> => {
+  try {
+    return Date.now() - (await stat(path)).mtimeMs;
+  } catch (error) {
+    if (code(error) === 'ENOENT') return undefined;
+    throw error;
+  }
+};
+
+/** Remove `lock` if it is still abandoned, one process at a time. Losing the takeover lock means another waiter is on it. */
+async function removeIfStale(lock: string, staleMs: number): Promise<void> {
+  const takeover = `${lock}.takeover`;
+  try {
+    await writeFile(takeover, `${process.pid}\n`, { flag: 'wx' });
+  } catch (error) {
+    if (code(error) !== 'EEXIST') throw error;
+    // Held for a stat and an unlink only; one this old belongs to a process that died right there.
+    const age: number | undefined = await ageOf(takeover);
+    if (age !== undefined && age > staleMs) await rm(takeover, { force: true });
+    await sleep(5);
+
+    return;
+  }
+  try {
+    const age: number | undefined = await ageOf(lock);
+    if (age !== undefined && age > staleMs) await rm(lock, { force: true });
+  } finally {
+    await rm(takeover, { force: true });
+  }
+}
+
 /**
  * Run `fn` while holding the lock of `path`, so two processes never read-modify-write the same file at once.
  * Keep `fn` short (no network): the lock is a plain file created with `wx`, and one older than `staleMs` is
  * treated as abandoned.
+ *
+ * Taking over an abandoned lock is itself done under a second lock (`<lock>.takeover`), re-checking the age
+ * inside it. Without that, two waiters could both see the dead lock, and the slower one would delete the lock
+ * the faster one had just created and enter beside it.
  */
 export async function withFileLock<T>(path: string, fn: () => Promise<T>, options: LockOptions = LOCK_DEFAULTS): Promise<T | typeof BUSY> {
   const lock: string = await lockPathFor(path);
@@ -49,15 +84,12 @@ export async function withFileLock<T>(path: string, fn: () => Promise<T>, option
       if (code(error) !== 'EEXIST') throw error;
     }
 
-    try {
-      if (Date.now() - (await stat(lock)).mtimeMs > options.staleMs) {
-        await rm(lock, { force: true });
-        continue;
-      }
-    } catch (error) {
-      // Released between the failed create and the stat: try again at once.
-      if (code(error) === 'ENOENT') continue;
-      throw error;
+    const age: number | undefined = await ageOf(lock);
+    // Released between the failed create and the stat: try again at once.
+    if (age === undefined) continue;
+    if (age > options.staleMs) {
+      await removeIfStale(lock, options.staleMs);
+      continue;
     }
 
     if (Date.now() >= deadline) return BUSY;
