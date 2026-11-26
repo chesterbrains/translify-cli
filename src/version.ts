@@ -1,3 +1,3 @@
 // Must equal package.json "version"; src/version.test.ts fails when they drift.
-export const VERSION: string = '0.13.3';
+export const VERSION: string = '0.13.4';
 export const USER_AGENT: string = `translify-cli/${VERSION}`;

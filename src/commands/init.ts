@@ -1,6 +1,7 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { writeFileAtomic } from '../file-write.js';
 import type { Config, FileRule } from '../config.js';
 import type { ExitCode } from '../errors.js';
 import type { Match } from '../patterns.js';
@@ -150,7 +151,7 @@ export async function runInit(deps: InitDeps): Promise<ExitCode> {
 
     return EXIT.failed;
   }
-  await writeFile(target, text);
+  await writeFileAtomic(target, text);
   deps.out(me === undefined ? NO_KEY_LINE : 'Wrote translify.json.');
 
   return EXIT.ok;
