@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Config } from '../config.js';
 import { CliError, EXIT } from '../errors.js';
+import { lockPathFor } from '../file-lock.js';
 import { runSet, targetFile, type SetDeps, type SetOptions, type SetResponse } from './set.js';
 
 type Rule = { pattern: string; format: string; jsonStyle?: 'nested' | 'flat'; namespace?: string };
@@ -240,6 +241,34 @@ describe('runSet', () => {
     expect(await runSet('promo.title', 'en', 'Hi', { json: true }, deps)).toBe(EXIT.ok);
     expect(JSON.parse(out[0]!).file).toEqual({ path: 'locales/en/common.json', action: 'skipped', reason });
     expect(await read('locales/en/common.json')).toBe(text);
+  });
+
+  it('many set commands at once on one file keep every entry', async () => {
+    await write('locales/en/common.json', '{\n  "a": "1"\n}\n');
+    const keys = Array.from({ length: 25 }, (_, index) => `k${String(index).padStart(2, '0')}.title`);
+    const codes = await Promise.all(keys.map(async (key) => (await run(key, 'en', key, {}, res({ key }))).code));
+    expect(codes.every((code) => code === EXIT.ok)).toBe(true);
+    const file = JSON.parse(await read('locales/en/common.json')) as Record<string, { title: string } | string>;
+    expect(Object.keys(file).sort()).toEqual(['a', ...keys.map((key) => key.split('.')[0]!)].sort());
+    expect(await readdir(join(dir, 'locales/en'))).toEqual(['common.json']);
+  });
+
+  it('a file another process holds past the wait: the server write stands, a skipped busy outcome, exit 0', async () => {
+    await write('locales/en/common.json', '{}\n');
+    const lock = await lockPathFor(join(dir, 'locales/en/common.json'));
+    await writeFile(lock, 'other\n');
+    try {
+      const out: string[] = [];
+      const put = vi.fn().mockResolvedValue(res());
+      const deps: SetDeps = { cwd: dir, config: config(), api: { put, get: vi.fn() } as never, out: (l) => out.push(l), err: () => undefined, readStdin: undefined, lock: { waitMs: 50, staleMs: 60_000 } };
+      expect(await runSet('promo.title', 'en', 'Hi', {}, deps)).toBe(EXIT.ok);
+      expect(out.at(-1)).toBe('locales/en/common.json is being written by another translify process; nothing written locally. Run `translify pull` to sync the file.');
+      expect(await runSet('promo.title', 'en', 'Hi', { json: true }, deps)).toBe(EXIT.ok);
+      expect(JSON.parse(out.at(-1)!).file).toEqual({ path: 'locales/en/common.json', action: 'skipped', reason: 'busy' });
+      expect(await read('locales/en/common.json')).toBe('{}\n');
+    } finally {
+      await rm(lock, { force: true });
+    }
   });
 
   it('a response path that resolves outside the project is refused: no read, no write', async () => {
