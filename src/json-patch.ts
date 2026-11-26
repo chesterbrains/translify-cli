@@ -47,25 +47,37 @@ const visibleProperties = (object: Node): Property[] => {
   return [...last.values()];
 };
 
-type Search = { found: 'leaf'; value: Node } | { found: 'blocked' } | { found: 'none' };
+type Search = { found: 'leaf'; value: Node } | { found: 'blocked' } | { found: 'ambiguous' } | { found: 'none' };
 
-/** Matches the key under any split of its dots; of several leaves the last in document order wins, as in the server's parser. */
+/**
+ * Matches the key under any split of its dots; of several leaves the last in document order wins, as in the server's
+ * parser. The exception: JavaScript lists an array-index name (`"1"`) before every other name whatever the document
+ * says, so when the copy under such a name is not the first one in the document (`"1.x"`, then `"1": { "x" }`) the
+ * server's last differs from the file's, and the file has to be fixed rather than guessed at.
+ */
 function search(object: Node, rest: string): Search {
   let leaf: Node | undefined;
   let blocked = false;
+  const leafNames: string[] = [];
 
   for (const { name, value } of visibleProperties(object)) {
     if (name === rest) {
-      if (value.type === 'string') leaf = value;
-      else blocked = true;
+      if (value.type === 'string') {
+        leaf = value;
+        leafNames.push(name);
+      } else blocked = true;
     } else if (rest.startsWith(`${name}.`) && value.type === 'object') {
       const inner = search(value, rest.slice(name.length + 1));
 
-      if (inner.found === 'leaf') leaf = inner.value;
-      else if (inner.found === 'blocked') blocked = true;
+      if (inner.found === 'ambiguous') return inner;
+      if (inner.found === 'leaf') {
+        leaf = inner.value;
+        leafNames.push(name);
+      } else if (inner.found === 'blocked') blocked = true;
     }
   }
 
+  if (leafNames.slice(1).some(isIndexName)) return { found: 'ambiguous' };
   if (leaf !== undefined) return { found: 'leaf', value: leaf };
 
   return blocked ? { found: 'blocked' } : { found: 'none' };
@@ -146,6 +158,7 @@ export function patchJson(text: string | undefined, key: string, value: string, 
   const hit = search(root, key);
 
   if (hit.found === 'blocked') return { action: 'skipped', reason: 'blocked', at: key };
+  if (hit.found === 'ambiguous') return { action: 'skipped', reason: 'ambiguous', at: key };
 
   if (hit.found === 'leaf') {
     if (hit.value.value === value) return { action: 'unchanged', text };

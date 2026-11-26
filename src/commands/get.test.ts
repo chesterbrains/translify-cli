@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Config } from '../config.js';
 import { CliError, EXIT } from '../errors.js';
-import { explainKeyError, isMissingRoute, KEY_ROUTES_UNSUPPORTED, runGet, type GetKeyResponse, type GetOptions } from './get.js';
+import { explainKeyError, KEY_ROUTES_UNSUPPORTED, runGet, type GetKeyResponse, type GetOptions } from './get.js';
 
 const rule = (namespace?: string) => ({
   pattern: namespace === undefined ? 'locales/{locale}/{namespace}.json' : `locales/{locale}/${namespace}.json`,
@@ -84,6 +84,17 @@ describe('runGet', () => {
     expect([code, out, err]).toEqual([EXIT.failed, '', 'No es translation for promo.title.']);
   });
 
+  it('a stored empty string is a value, not an empty cell: an empty line, exit 0', async () => {
+    // The server never stores '' today; if it ever does, a script must still tell it from "no translation".
+    const cells = [{ locale: 'en', isDefault: true, value: '', status: 'APPROVED', issueSeverity: null }];
+    const out: string[] = [];
+    const err: string[] = [];
+    const deps = { api: { get: vi.fn().mockResolvedValue({ ...RES, cells }) } as never, config: config([rule()]), out: (l: string) => out.push(l), err: (l: string) => err.push(l) };
+    expect(await runGet('promo.title', 'en', {}, deps)).toBe(EXIT.ok);
+    // One line, empty: not the "no translation" case, which prints nothing on stdout and a line on stderr.
+    expect([out, err]).toEqual([[''], []]);
+  });
+
   it('a locale that is not a cell is refused', async () => {
     await expect(run(RES, 'promo.title', 'de')).rejects.toMatchObject({
       exitCode: EXIT.failed,
@@ -156,13 +167,5 @@ describe('explainKeyError', () => {
     expect(explainKeyError(other, 'k')).toBe(other);
     const plain = new Error('boom');
     expect(explainKeyError(plain, 'k')).toBe(plain);
-  });
-});
-
-describe('isMissingRoute', () => {
-  it('is a 404 without a code only', () => {
-    expect(isMissingRoute(new CliError(EXIT.failed, 'x', { statusCode: 404 }))).toBe(true);
-    expect(isMissingRoute(new CliError(EXIT.failed, 'x', { statusCode: 404, code: 'KEY_NOT_FOUND' }))).toBe(false);
-    expect(isMissingRoute(new Error('x'))).toBe(false);
   });
 });

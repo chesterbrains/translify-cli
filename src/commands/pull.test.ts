@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Config } from '../config.js';
-import { CliError } from '../errors.js';
+import { CliError, EXIT } from '../errors.js';
 import { runPull } from './pull.js';
 
 const config: Config = {
@@ -167,6 +167,13 @@ describe('runPull', () => {
     await expect(
       runPull({}, { cwd, config: { ...config, files: [config.files[0]!] }, api: client as never, out: quiet }),
     ).rejects.toBeInstanceOf(CliError);
+  });
+
+  it('a folder whose name merely starts with two dots is inside the repo', async () => {
+    const cwd = await tmp();
+    const dotted: Config = { ...config, files: [{ pattern: '..locales/{locale}/{namespace}.json', format: 'json', jsonStyle: 'flat' }] };
+    expect(await runPull({}, { cwd, config: dotted, api: api() as never, out: quiet })).toBe(EXIT.ok);
+    expect(await readFile(join(cwd, '..locales/it/cart.json'), 'utf8')).toBe('{\n  "a": "A"\n}\n');
   });
 
   it('--json prints the raw responses and a summary', async () => {

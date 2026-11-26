@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { BUSY, lockPathFor, removeIfStale, withFileLock } from './file-lock.js';
+import { BUSY, lockFolder, lockPathFor, removeIfStale, withFileLock } from './file-lock.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -209,5 +209,34 @@ describe('withFileLock', () => {
     await writeFile(file, '{}');
     expect(await lockPathFor(file)).toBe(before);
     expect(await lockPathFor(join(dir, 'real', 'fr', 'common.json'))).toBe(before);
+  });
+});
+
+describe('lockFolder', () => {
+  it.skipIf(process.platform === 'win32')('is this user\'s own folder, closed to others, and holds the locks', async () => {
+    const folder = await lockFolder(dir);
+    expect(folder).toBe(join(dir, `translify-${process.getuid?.()}`));
+    expect((await stat(folder)).mode & 0o777).toBe(0o700);
+    expect(await lockFolder(dir)).toBe(folder);
+    expect((await lockPathFor(join(dir, 'en.json'))).startsWith(`${await lockFolder()}`)).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses a folder of that name that belongs to someone else, or is not a folder', async () => {
+    await mkdir(join(dir, 'translify-12345'));
+    await expect(lockFolder(dir, 12345)).rejects.toThrow(/not a folder owned by this user/);
+    await writeFile(join(dir, 'translify-777'), 'x');
+    await expect(lockFolder(dir, 777)).rejects.toMatchObject({ code: 'EEXIST' });
+  });
+
+  it.skipIf(process.platform === 'win32')('closes a folder of its own that was left open to others', async () => {
+    const folder = join(dir, `translify-${process.getuid?.()}`);
+    await mkdir(folder);
+    await chmod(folder, 0o777);
+    expect(await lockFolder(dir)).toBe(folder);
+    expect((await stat(folder)).mode & 0o777).toBe(0o700);
+  });
+
+  it('without a uid (Windows) the folder has a fixed name', async () => {
+    expect(await lockFolder(dir, null)).toBe(join(dir, 'translify-locks'));
   });
 });

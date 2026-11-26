@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -45,13 +45,32 @@ async function realOrNearest(path: string): Promise<string> {
 }
 
 /**
+ * This user's own folder of locks inside the OS temp folder (`translify-<uid>`, mode 0700). On a temp folder
+ * shared by several users nobody else can then leave a lock that this user cannot remove, or create one in
+ * advance under a name that is easy to guess. Windows has no uid and gives every user their own temp folder.
+ * A folder of that name that is not a plain directory of this user is refused rather than trusted.
+ */
+export async function lockFolder(base: string = tmpdir(), uid: number | null = process.getuid?.() ?? null): Promise<string> {
+  const folder: string = join(base, `translify-${uid ?? 'locks'}`);
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const info = await lstat(folder);
+  if (!info.isDirectory() || (uid !== null && info.uid !== uid)) {
+    throw new Error(`${folder} is not a folder owned by this user; remove it, or point TMPDIR at a folder of your own`);
+  }
+  // Left open by an earlier umask or by hand: close it again.
+  if (uid !== null && (info.mode & 0o077) !== 0) await chmod(folder, 0o700);
+
+  return folder;
+}
+
+/**
  * The lock for a file lives in the OS temp folder, named by a hash of the file's real path: nothing is ever
  * created in the working tree.
  */
 export async function lockPathFor(path: string): Promise<string> {
   const real: string = await realOrNearest(resolve(path));
 
-  return join(tmpdir(), `translify-${createHash('sha256').update(real).digest('hex').slice(0, 32)}.lock`);
+  return join(await lockFolder(), `${createHash('sha256').update(real).digest('hex').slice(0, 32)}.lock`);
 }
 
 interface Seen {

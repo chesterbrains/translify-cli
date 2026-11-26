@@ -1,16 +1,16 @@
 import { mkdir, readFile } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname } from 'node:path';
 
 import type { Config, FileRule } from '../config.js';
 import { pathContext } from '../context.js';
 import { CliError, EXIT, type ExitCode } from '../errors.js';
 import { BUSY, withFileLock, type LockOptions } from '../file-lock.js';
-import { writeFileAtomic } from '../file-write.js';
-import type { Api } from '../http.js';
+import { insideFolder, writeFileAtomic } from '../file-write.js';
+import { isMissingRoute, type Api } from '../http.js';
 import { patchJson, type PatchResult } from '../json-patch.js';
 import { configNamespace } from '../namespace.js';
 import { findFiles, pathFor, toTranslifyLocale, type Match, type PathContext } from '../patterns.js';
-import { explainKeyError, isMissingRoute, KEY_ROUTES_UNSUPPORTED } from './get.js';
+import { explainKeyError, KEY_ROUTES_UNSUPPORTED } from './get.js';
 import type { LintIssue } from './lint.js';
 import { WIRE_STATUS, type PushStatusFlag } from './push.js';
 
@@ -53,6 +53,8 @@ export interface SetDeps {
   readStdin: (() => Promise<string>) | undefined;
   /** Lock timings for the local patch; the defaults outside tests. */
   lock?: LockOptions;
+  /** Test seam: the lock itself. */
+  withLock?: typeof withFileLock;
 }
 
 /**
@@ -112,13 +114,6 @@ const locate = async (deps: SetDeps): Promise<Located> => {
   return { context, matches: await findFiles(deps.config, deps.cwd, context) };
 };
 
-const insideProject = (cwd: string, path: string): string | undefined => {
-  const absolute: string = resolve(cwd, path);
-  const rel: string = relative(resolve(cwd), absolute);
-
-  return rel === '' || rel.startsWith('..') || isAbsolute(rel) ? undefined : absolute;
-};
-
 const readIfPresent = async (absolute: string): Promise<string | undefined> => {
   try {
     return await readFile(absolute, 'utf8');
@@ -142,11 +137,32 @@ const refusedLine = (patch: { reason: 'invalid' | 'blocked' | 'ambiguous'; at?: 
   }
 };
 
+/** How often, and how far apart, the check looks again before it believes a file is broken or unreadable. */
+const RECHECKS = 3;
+const RECHECK_MS = 40;
+
+/**
+ * The patch the file would get, read without the lock. Another `set` may be writing the file at this very moment
+ * (in place, where a rename is not possible, or with the file briefly unreadable on Windows), so a file that looks
+ * broken or cannot be read is looked at again before that is believed. A read that keeps failing throws.
+ */
+async function judge(absolute: string, key: string, value: string, style: 'nested' | 'flat'): Promise<PatchResult> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const patch: PatchResult = patchJson(await readIfPresent(absolute), key, value, style);
+      if (attempt === RECHECKS || patch.action !== 'skipped' || patch.reason !== 'invalid') return patch;
+    } catch (error) {
+      if (attempt === RECHECKS) throw error;
+    }
+    await new Promise((done) => setTimeout(done, RECHECK_MS));
+  }
+}
+
 /**
  * Before the request: refuse when the local JSON file could not take the entry, so the server and the file never
  * end up out of step. Runs the same patcher as the write, in memory. Anything it cannot judge (no rule, another
- * format, a namespace only the server can name with several files to choose from, a lookup failure) is left to
- * `patchLocal`, which reports after the write as before. With `--json` a refusal also prints the `file` outcome
+ * format, a namespace only the server can name with several files to choose from) is left to `patchLocal`, which
+ * reports after the write as before; a lookup that fails says so on stderr and the write goes ahead unchecked. With `--json` a refusal also prints the `file` outcome
  * (`response: null`) on stdout, so a script reads the reason the same way as after a write.
  */
 async function preflight(
@@ -158,10 +174,16 @@ async function preflight(
   deps: SetDeps,
 ): Promise<Located | undefined> {
   let located: Located;
-  let path: string;
-  let patch: PatchResult;
   try {
     located = await locate(deps);
+  } catch (error) {
+    deps.err(`Could not check the local file before sending (${message(error)}); continuing without the check.`);
+
+    return undefined;
+  }
+  let path: string;
+  let patch: PatchResult;
+  {
     let target: { path: string; rule: FileRule } | undefined;
     if (namespace !== undefined) target = targetFile(located.matches, deps.config, located.context, locale, namespace);
     else {
@@ -169,12 +191,20 @@ async function preflight(
       target = candidates.length === 1 ? candidates[0] : undefined;
     }
     if (target === undefined || target.rule.format !== 'json') return located;
-    const absolute: string | undefined = insideProject(deps.cwd, target.path);
+    const absolute: string | undefined = insideFolder(deps.cwd, target.path);
     if (absolute === undefined) return located;
     path = target.path;
-    patch = patchJson(await readIfPresent(absolute), key, value, target.rule.jsonStyle ?? 'nested');
-  } catch {
-    return undefined;
+    const style: 'nested' | 'flat' = target.rule.jsonStyle ?? 'nested';
+    try {
+      patch = await judge(absolute, key, value, style);
+    } catch (error) {
+      // A folder at that path, no permission: the patch after the write would fail the same way.
+      if (json) deps.out(JSON.stringify({ response: null, file: { path, action: 'skipped', reason: 'io' } }));
+      throw new CliError(
+        EXIT.failed,
+        `Could not read ${path}: ${message(error)}. Nothing was sent to Translify and nothing was written. Fix the file, or pass --no-write to update Translify only.`,
+      );
+    }
   }
   if (patch.action === 'skipped') {
     const file: FileOutcome = { path, action: 'skipped', reason: patch.reason };
@@ -197,14 +227,17 @@ async function patchLocal(
 ): Promise<{ file: FileOutcome; line: string }> {
   let path: string | null = null;
   try {
-    if (res.locale !== sent.locale || (sent.namespace !== undefined && res.namespace !== sent.namespace)) {
+    // Case aside: a server that spells the code differently (`pt-br`) still answered for the locale that was asked.
+    if (res.locale.toLowerCase() !== sent.locale.toLowerCase() || (sent.namespace !== undefined && res.namespace !== sent.namespace)) {
       return {
         file: { path: null, action: 'skipped', reason: 'mismatch' },
         line: `The server answered for ${res.locale}/${res.namespace}, not what was asked; nothing written locally.`,
       };
     }
     const { context, matches }: Located = known ?? (await locate(deps));
-    const target = targetFile(matches, deps.config, context, res.locale, res.namespace);
+    // The locale as the files on disk spell it, when the answer and the request differ in case only.
+    const locale: string = matches.find((m) => m.locale.toLowerCase() === sent.locale.toLowerCase())?.locale ?? sent.locale;
+    const target = targetFile(matches, deps.config, context, locale, res.namespace);
     if (target === undefined) {
       return {
         file: { path: null, action: 'skipped', reason: 'no-rule' },
@@ -219,7 +252,7 @@ async function patchLocal(
       };
     }
 
-    const absolute: string | undefined = insideProject(deps.cwd, path);
+    const absolute: string | undefined = insideFolder(deps.cwd, path);
     if (absolute === undefined) {
       return {
         file: { path: null, action: 'skipped', reason: 'outside' },
@@ -230,7 +263,7 @@ async function patchLocal(
     const style: 'nested' | 'flat' = target.rule.jsonStyle ?? 'nested';
     // Read, patch and write under the file's lock: two `set` commands at once would otherwise both read the old
     // text and the last writer would drop the other's entry.
-    const done = await withFileLock(
+    const done = await (deps.withLock ?? withFileLock)(
       absolute,
       async (held): Promise<{ file: FileOutcome; line: string } | typeof BUSY> => {
         const patch: PatchResult = patchJson(await readIfPresent(absolute), res.key, value, style);
@@ -240,7 +273,7 @@ async function patchLocal(
         await mkdir(dirname(absolute), { recursive: true });
         // A waiter takes over a lock held too long (this process was suspended, the disk stalled): its text is newer.
         if (!(await held())) return BUSY;
-        await writeFileAtomic(absolute, patch.text, { sweep: true });
+        await writeFileAtomic(absolute, patch.text, { sweep: true, sync: true });
 
         return { file: { path: file, action: patch.action }, line: `${patch.action === 'created' ? 'Created' : 'Updated'} ${file}.` };
       },

@@ -1,8 +1,7 @@
 import type { Config } from '../config.js';
-import type { Api } from '../http.js';
+import { isMissingRoute, type Api } from '../http.js';
 import { CliError, EXIT, type ExitCode } from '../errors.js';
 import { toTranslifyLocale } from '../patterns.js';
-import { isMissingRoute } from './get.js';
 import { renderLint } from '../render.js';
 
 /** The server's `GET /cli/v1/lint` body (BE lint spec §2.3). */

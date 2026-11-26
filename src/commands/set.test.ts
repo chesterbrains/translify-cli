@@ -271,6 +271,90 @@ describe('runSet', () => {
     }
   });
 
+  it('a file that cannot be read is refused before the request: nothing sent, exit 1, --json reason io', async () => {
+    await mkdir(join(dir, 'locales/en/common.json'), { recursive: true });
+    const put = vi.fn();
+    const out: string[] = [];
+    // The namespace is pinned, so the file is known although nothing on disk matches as a file.
+    const deps: SetDeps = { cwd: dir, config: config([rule({ namespace: 'common' })]), api: { put, get: vi.fn() } as never, out: (l) => out.push(l), err: () => undefined, readStdin: undefined };
+    const error = await runSet('promo.title', 'en', 'Hi', { json: true }, deps).catch((e: unknown) => e);
+    expect((error as CliError).exitCode).toBe(EXIT.failed);
+    expect((error as CliError).message).toMatch(/^Could not read locales\/en\/common\.json: .*Nothing was sent to Translify and nothing was written\. Fix the file, or pass --no-write to update Translify only\.$/);
+    expect(out).toEqual([JSON.stringify({ response: null, file: { path: 'locales/en/common.json', action: 'skipped', reason: 'io' } })]);
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  describe('a rule that needs whoami (Android)', () => {
+    const android = config([rule(), { pattern: 'app/values-{locale}/strings.xml', format: 'android' }]);
+    const deps = (get: ReturnType<typeof vi.fn>, put: ReturnType<typeof vi.fn>, err: string[]): SetDeps => ({
+      cwd: dir,
+      config: android,
+      api: { put, get } as never,
+      out: () => undefined,
+      err: (l) => err.push(l),
+      readStdin: undefined,
+    });
+
+    it('asks whoami once for the check and the patch together', async () => {
+      await write('locales/en/common.json', '{}\n');
+      const get = vi.fn().mockResolvedValue({ project: { defaultLocale: 'en' }, locales: ['en'] });
+      const put = vi.fn().mockResolvedValue(res());
+      const err: string[] = [];
+      expect(await runSet('promo.title', 'en', 'Hi', {}, deps(get, put, err))).toBe(EXIT.ok);
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(err).toEqual([]);
+      expect(JSON.parse(await read('locales/en/common.json'))).toEqual({ promo: { title: 'Hi' } });
+    });
+
+    it('a lookup that fails says the file was not checked, and the write goes ahead', async () => {
+      await write('locales/en/common.json', '{"promo":"x"}');
+      const get = vi.fn().mockRejectedValue(new Error('whoami down'));
+      const put = vi.fn().mockResolvedValue(res());
+      const err: string[] = [];
+      expect(await runSet('promo.title', 'en', 'Hi', {}, deps(get, put, err))).toBe(EXIT.ok);
+      expect(err).toEqual(['Could not check the local file before sending (whoami down); continuing without the check.']);
+      expect(put).toHaveBeenCalledTimes(1);
+      expect(await read('locales/en/common.json')).toBe('{"promo":"x"}');
+    });
+  });
+
+  it('a set that lost its lock while patching (it was stalled) writes nothing and reports busy', async () => {
+    await write('locales/en/common.json', '{}\n');
+    const out: string[] = [];
+    const put = vi.fn().mockResolvedValue(res());
+    // The lock ran the patch, but a waiter took the lock over meanwhile: held() answers false.
+    const withLock = (async (_path: string, fn: (held: () => Promise<boolean>) => Promise<unknown>) => fn(async () => false)) as never;
+    const deps: SetDeps = { cwd: dir, config: config(), api: { put, get: vi.fn() } as never, out: (l) => out.push(l), err: () => undefined, readStdin: undefined, withLock };
+    expect(await runSet('promo.title', 'en', 'Hi', { json: true }, deps)).toBe(EXIT.ok);
+    expect(JSON.parse(out[0]!).file).toEqual({ path: 'locales/en/common.json', action: 'skipped', reason: 'busy' });
+    expect(await read('locales/en/common.json')).toBe('{}\n');
+  });
+
+  it('a file that is mid-write by another set (broken for a moment) is looked at again, not refused', async () => {
+    await write('locales/en/common.json', '{ "a": ');
+    setTimeout(() => void write('locales/en/common.json', '{}\n'), 15);
+    const { code, out, put } = await run('promo.title', 'en', 'Hi', {}, res());
+    expect(code).toBe(EXIT.ok);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(out.at(-1)).toBe('Updated locales/en/common.json.');
+  });
+
+  it('a locale typed in another case than the files on disk patches the existing file', async () => {
+    await write('locales/pt-BR/common.json', '{}\n');
+    const { out } = await run('promo.title', 'pt-br', 'Oi', {}, res({ locale: 'pt-BR' }));
+    expect(out.at(-1)).toBe('Updated locales/pt-BR/common.json.');
+    expect(await readdir(join(dir, 'locales'))).toEqual(['pt-BR']);
+  });
+
+  it('a server that spells the locale in another case still gets its file patched; a file named with leading dots is inside the project', async () => {
+    const cfg = config([rule({ pattern: '..locales/{locale}/{namespace}.json' })]);
+    await write('..locales/pt-BR/common.json', '{}\n');
+    const { code, out } = await run('promo.title', 'pt-BR', 'Oi', {}, res({ locale: 'pt-br' }), cfg);
+    expect(code).toBe(EXIT.ok);
+    expect(out.at(-1)).toBe('Updated ..locales/pt-BR/common.json.');
+    expect(JSON.parse(await read('..locales/pt-BR/common.json'))).toEqual({ promo: { title: 'Oi' } });
+  });
+
   it('a response path that resolves outside the project is refused: no read, no write', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'translify-outer-'));
     const inner = join(parent, 'project');

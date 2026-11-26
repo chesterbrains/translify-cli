@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { CliError } from './errors.js';
-import { Api, retryDelayMs } from './http.js';
+import { CliError, EXIT } from './errors.js';
+import { Api, isMissingRoute, retryDelayMs } from './http.js';
 
 const reply = (status: number, body: unknown, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
@@ -186,5 +186,13 @@ describe('Api', () => {
     expect(fetchImpl.mock.calls[0]![1].method).toBe('PUT');
     expect(fetchImpl.mock.calls[0]![1].headers['content-type']).toBe('application/json');
     expect(fetchImpl.mock.calls[0]![1].body).toBe('{"a":1}');
+  });
+});
+
+describe('isMissingRoute', () => {
+  it('is a 404 without a code only', () => {
+    expect(isMissingRoute(new CliError(EXIT.failed, 'x', { statusCode: 404 }))).toBe(true);
+    expect(isMissingRoute(new CliError(EXIT.failed, 'x', { statusCode: 404, code: 'KEY_NOT_FOUND' }))).toBe(false);
+    expect(isMissingRoute(new Error('x'))).toBe(false);
   });
 });

@@ -1,10 +1,10 @@
 import fg from 'fast-glob';
 import { mkdir, readFile } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname } from 'node:path';
 
 import { type Config, type FileRule, isSymfonyDialect } from '../config.js';
 import type { ExitCode } from '../errors.js';
-import { writeFileAtomic } from '../file-write.js';
+import { insideFolder, writeFileAtomic } from '../file-write.js';
 import type { Api } from '../http.js';
 import { pathContext } from '../context.js';
 import { CliError, EXIT, ONLY_APPROVED_NEEDS_WORKING } from '../errors.js';
@@ -303,9 +303,8 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
         if (symfonyWildcard && ownerOf(file.namespace) !== rule) continue;
 
         const path: string = pathFor(rule, file.locale, file.namespace, deps.config, context);
-        const absolute: string = resolve(deps.cwd, path);
-        const rel: string = relative(resolve(deps.cwd), absolute);
-        if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+        const absolute: string | undefined = insideFolder(deps.cwd, path);
+        if (absolute === undefined) {
           throw new CliError(EXIT.failed, `Refusing to write ${path}: it resolves outside the project directory.`);
         }
 

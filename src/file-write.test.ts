@@ -1,10 +1,10 @@
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, mkdtemp, open, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renameOver, writeFileAtomic } from './file-write.js';
+import { insideFolder, renameOver, writeFileAtomic } from './file-write.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -140,5 +140,66 @@ describe('renameOver', () => {
     const other = failing('ENOSPC', 1);
     await expect(renameOver('a', 'b', 'win32', other)).rejects.toMatchObject({ code: 'ENOSPC' });
     expect(other).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('writeFileAtomic options', () => {
+  it('sync flushes the temp file before the rename; a filesystem that cannot flush still gets the write', async () => {
+    const file = join(dir, 'en.json');
+    const synced: string[] = [];
+    let refuse = false;
+    const openFile = (async (path: string, flags: string) => {
+      const handle = await open(path, flags);
+      const sync = handle.sync.bind(handle);
+      handle.sync = async () => {
+        synced.push(path);
+        if (refuse) throw Object.assign(new Error('ENOTSUP'), { code: 'ENOTSUP' });
+
+        return sync();
+      };
+
+      return handle;
+    }) as never;
+    await writeFileAtomic(file, 'one', { sync: true, openFile });
+    expect(synced).toHaveLength(1);
+    expect(synced[0]).toMatch(/\.en\.json\.\d+\.[0-9a-f]{8}\.tmp$/);
+    await writeFileAtomic(file, 'plain', { openFile });
+    expect(synced).toHaveLength(1);
+    refuse = true;
+    await writeFileAtomic(file, 'two', { sync: true, openFile });
+    expect(synced).toHaveLength(2);
+    expect(await readFile(file, 'utf8')).toBe('two');
+    expect(await readdir(dir)).toEqual(['en.json']);
+  });
+
+  it.skipIf(process.platform === 'win32')('a file with a second hard link is written in place, so both names keep one content', async () => {
+    const file = join(dir, 'en.json');
+    const twin = join(dir, 'twin.json');
+    await writeFile(file, 'old');
+    await link(file, twin);
+    await writeFileAtomic(file, 'new');
+    expect(await readFile(twin, 'utf8')).toBe('new');
+    expect((await stat(file)).nlink).toBe(2);
+    // The leftover sweep runs on this path too.
+    const stale = join(dir, '.en.json.111.aaaaaaaa.tmp');
+    await writeFile(stale, 'x');
+    const old = new Date(Date.now() - 2 * 60 * 60_000);
+    await utimes(stale, old, old);
+    await writeFileAtomic(file, 'newer', { sweep: true });
+    expect((await readdir(dir)).sort()).toEqual(['en.json', 'twin.json']);
+  });
+});
+
+describe('insideFolder', () => {
+  it('judges by path segment, not by the first characters', () => {
+    const root = join(dir, 'project');
+    expect(insideFolder(root, 'locales/en.json')).toBe(join(root, 'locales', 'en.json'));
+    expect(insideFolder(root, '..drafts/en.json')).toBe(join(root, '..drafts', 'en.json'));
+    expect(insideFolder(root, '..en.json')).toBe(join(root, '..en.json'));
+    expect(insideFolder(root, '../en.json')).toBeUndefined();
+    expect(insideFolder(root, '..')).toBeUndefined();
+    expect(insideFolder(root, 'a/../../en.json')).toBeUndefined();
+    expect(insideFolder(root, '.')).toBeUndefined();
+    expect(insideFolder(root, join(dir, 'elsewhere', 'en.json'))).toBeUndefined();
   });
 });

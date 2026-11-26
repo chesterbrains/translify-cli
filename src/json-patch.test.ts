@@ -132,4 +132,22 @@ describe('patchJson', () => {
     expect(patched(patchJson(objectLast, 'a.b', 'new', 'nested'))).toBe(objectLast.replace('"old"', '"new"'));
     expect(patched(patchJson(objectFirst, 'a.b', 'new', 'nested'))).toBe(objectFirst.replace('"old"', '"new"'));
   });
+
+  it('a copy under an array-index name that is not the first in the document is ambiguous: the server reads it first', () => {
+    // JavaScript lists "1" before "1.x" whatever the document says, so "the last one" differs on the server.
+    expect(patchJson('{"1.x":"a","1":{"x":"b"}}', '1.x', 'v', 'nested')).toEqual({ action: 'skipped', reason: 'ambiguous', at: '1.x' });
+    expect(patchJson('{"n":{"1.x":"a","1":{"x":"b"}}}', 'n.1.x', 'v', 'nested')).toEqual({ action: 'skipped', reason: 'ambiguous', at: 'n.1.x' });
+  });
+
+  it('where document order and the server\'s order agree, the last copy is still the one edited', () => {
+    // The index name comes first in the document too.
+    expect(patchJson('{"1":{"x":"b"},"1.x":"a"}', '1.x', 'v', 'nested')).toEqual({ action: 'patched', text: '{"1":{"x":"b"},"1.x":"v"}' });
+    // Above the array-index range JavaScript keeps document order.
+    expect(patchJson('{"99999999999.x":"a","99999999999":{"x":"b"}}', '99999999999.x', 'v', 'nested')).toEqual({
+      action: 'patched',
+      text: '{"99999999999.x":"a","99999999999":{"x":"v"}}',
+    });
+    // One copy only is patched as ever.
+    expect(patchJson('{"1":{"x":"b"}}', '1.x', 'v', 'nested')).toEqual({ action: 'patched', text: '{"1":{"x":"v"}}' });
+  });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@chesterbrains/translify-cli",
-  "version": "0.13.4",
+  "version": "0.13.5",
   "description": "Push, pull and publish Translify translations from your repository",
   "license": "MIT",
   "repository": {
@@ -27,6 +27,7 @@
     "prepublishOnly": "pnpm build",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
+    "test:parallel": "node scripts/parallel-set.mjs",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
