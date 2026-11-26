@@ -663,7 +663,7 @@ translify set checkout.promo.banner en "Free shipping" --namespace app      # a 
 
 - An empty value is refused: clearing a translation is done in Translify.
 - **Rate limit.** The server allows 120 requests per minute per secret key. When it answers `RATE_LIMITED` the CLI waits (honouring `Retry-After`) and retries up to 3 times. A script that sets hundreds of keys will be slowed down by this; use `translify push` for bulk changes.
-- **Run `set` commands one after another, not in parallel, when they touch the same file.** The server keeps every value, but two simultaneous local patches can lose one; `translify pull` repairs it.
+- **Several `set` commands at once are safe**, also on the same file (`xargs -P`, a parallel CI step): each one takes a short lock on the file while it patches it, so no entry is lost. The lock is a small file in the system temp folder, never in your project. If a file stays locked for 10 seconds, `set` leaves it alone, says so and exits 0 (`--json`: `"reason": "busy"`); run `translify pull` to sync it. Running `pull` or `push` while `set` commands are still writing is not covered: run them one after another. The rate limit above still applies, so parallel `set` is not faster than `push` for bulk changes.
 
 #### Review
 

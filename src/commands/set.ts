@@ -1,9 +1,11 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import type { Config, FileRule } from '../config.js';
 import { pathContext } from '../context.js';
 import { CliError, EXIT, type ExitCode } from '../errors.js';
+import { BUSY, withFileLock, type LockOptions } from '../file-lock.js';
+import { writeFileAtomic } from '../file-write.js';
 import type { Api } from '../http.js';
 import { patchJson, type PatchResult } from '../json-patch.js';
 import { configNamespace } from '../namespace.js';
@@ -49,6 +51,8 @@ export interface SetDeps {
   err: (line: string) => void;
   /** Undefined when stdin is a terminal. */
   readStdin: (() => Promise<string>) | undefined;
+  /** Lock timings for the local patch; the defaults outside tests. */
+  lock?: LockOptions;
 }
 
 /**
@@ -222,19 +226,32 @@ async function patchLocal(
         line: `Refusing to write ${path}: it resolves outside the project directory.`,
       };
     }
-    const patch: PatchResult = patchJson(await readIfPresent(absolute), res.key, value, target.rule.jsonStyle ?? 'nested');
-    if (patch.action === 'skipped') {
+    const file: string = path;
+    const style: 'nested' | 'flat' = target.rule.jsonStyle ?? 'nested';
+    // Read, patch and write under the file's lock: two `set` commands at once would otherwise both read the old
+    // text and the last writer would drop the other's entry.
+    const done = await withFileLock(
+      absolute,
+      async (): Promise<{ file: FileOutcome; line: string }> => {
+        const patch: PatchResult = patchJson(await readIfPresent(absolute), res.key, value, style);
+        if (patch.action === 'skipped') return { file: { path: file, action: 'skipped', reason: patch.reason }, line: skippedLine(patch, file, res.key) };
+        if (patch.action === 'unchanged') return { file: { path: file, action: 'unchanged' }, line: `${file} already up to date.` };
+
+        await mkdir(dirname(absolute), { recursive: true });
+        await writeFileAtomic(absolute, patch.text);
+
+        return { file: { path: file, action: patch.action }, line: `${patch.action === 'created' ? 'Created' : 'Updated'} ${file}.` };
+      },
+      deps.lock,
+    );
+    if (done === BUSY) {
       return {
-        file: { path, action: 'skipped', reason: patch.reason },
-        line: skippedLine(patch, path, res.key),
+        file: { path, action: 'skipped', reason: 'busy' },
+        line: `${path} is being written by another translify process; nothing written locally. Run \`translify pull\` to sync the file.`,
       };
     }
-    if (patch.action === 'unchanged') return { file: { path, action: 'unchanged' }, line: `${path} already up to date.` };
 
-    await mkdir(dirname(absolute), { recursive: true });
-    await writeFile(absolute, patch.text, 'utf8');
-
-    return { file: { path, action: patch.action }, line: `${patch.action === 'created' ? 'Created' : 'Updated'} ${path}.` };
+    return done;
   } catch (error) {
     return {
       file: { path, action: 'skipped', reason: 'io' },

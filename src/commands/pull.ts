@@ -1,9 +1,10 @@
 import fg from 'fast-glob';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import { type Config, type FileRule, isSymfonyDialect } from '../config.js';
 import type { ExitCode } from '../errors.js';
+import { writeFileAtomic } from '../file-write.js';
 import type { Api } from '../http.js';
 import { pathContext } from '../context.js';
 import { CliError, EXIT, ONLY_APPROVED_NEEDS_WORKING } from '../errors.js';
@@ -332,7 +333,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
   if (!opts.check) {
     for (const item of plan) {
       await mkdir(dirname(item.absolute), { recursive: true });
-      await writeFile(item.absolute, item.content);
+      await writeFileAtomic(item.absolute, item.content);
     }
   }
 
