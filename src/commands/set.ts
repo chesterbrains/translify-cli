@@ -232,13 +232,15 @@ async function patchLocal(
     // text and the last writer would drop the other's entry.
     const done = await withFileLock(
       absolute,
-      async (): Promise<{ file: FileOutcome; line: string }> => {
+      async (held): Promise<{ file: FileOutcome; line: string } | typeof BUSY> => {
         const patch: PatchResult = patchJson(await readIfPresent(absolute), res.key, value, style);
         if (patch.action === 'skipped') return { file: { path: file, action: 'skipped', reason: patch.reason }, line: skippedLine(patch, file, res.key) };
         if (patch.action === 'unchanged') return { file: { path: file, action: 'unchanged' }, line: `${file} already up to date.` };
 
         await mkdir(dirname(absolute), { recursive: true });
-        await writeFileAtomic(absolute, patch.text);
+        // A waiter takes over a lock held too long (this process was suspended, the disk stalled): its text is newer.
+        if (!(await held())) return BUSY;
+        await writeFileAtomic(absolute, patch.text, { sweep: true });
 
         return { file: { path: file, action: patch.action }, line: `${patch.action === 'created' ? 'Created' : 'Updated'} ${file}.` };
       },

@@ -1,10 +1,10 @@
-import { mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { BUSY, lockPathFor, withFileLock } from './file-lock.js';
+import { BUSY, lockPathFor, removeIfStale, withFileLock } from './file-lock.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -112,5 +112,102 @@ describe('withFileLock', () => {
     }
     expect(await withFileLock(file, async () => 'ran', { waitMs: 2000, staleMs: 1000 })).toBe('ran');
     await expect(readFile(`${lock}.takeover`)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('removeIfStale leaves the lock alone while another waiter holds the takeover, when the lock was replaced, and when it is fresh', async () => {
+    const file = join(dir, 'en.json');
+    const lock = await lockPathFor(file);
+    const old = new Date(Date.now() - 60_000);
+    try {
+      // Another waiter is mid-takeover: this one must not touch the lock.
+      await writeFile(lock, 'dead');
+      await utimes(lock, old, old);
+      await writeFile(`${lock}.takeover`, 'other waiter');
+      await removeIfStale(lock, 'dead', 1000);
+      expect(await readFile(lock, 'utf8')).toBe('dead');
+      expect(await readFile(`${lock}.takeover`, 'utf8')).toBe('other waiter');
+      await rm(`${lock}.takeover`);
+
+      // The dead lock was already replaced by a new holder (another token), however old its date looks.
+      await writeFile(lock, 'new holder');
+      await utimes(lock, old, old);
+      await removeIfStale(lock, 'dead', 1000);
+      expect(await readFile(lock, 'utf8')).toBe('new holder');
+
+      // Same token but refreshed since it was seen.
+      await writeFile(lock, 'dead');
+      await removeIfStale(lock, 'dead', 1000);
+      expect(await readFile(lock, 'utf8')).toBe('dead');
+
+      // Still the dead one: removed, and the takeover lock is released.
+      await utimes(lock, old, old);
+      await removeIfStale(lock, 'dead', 1000);
+      await expect(readFile(lock)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(`${lock}.takeover`)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(lock, { force: true });
+      await rm(`${lock}.takeover`, { force: true });
+    }
+  });
+
+  it('a holder slower than the stale limit learns it lost the lock and does not release the new holder\'s', async () => {
+    const file = join(dir, 'en.json');
+    const lock = await lockPathFor(file);
+    const timings = { waitMs: 2000, staleMs: 80 };
+    let secondEntered: (() => void) | undefined;
+    const entered = new Promise<void>((done) => (secondEntered = done));
+    let releaseSecond: (() => void) | undefined;
+    const hold = new Promise<void>((done) => (releaseSecond = done));
+
+    const slow = withFileLock(
+      file,
+      async (held) => {
+        expect(await held()).toBe(true);
+        await entered;
+
+        return held();
+      },
+      timings,
+    );
+    await new Promise((done) => setTimeout(done, 120));
+    const second = withFileLock(
+      file,
+      async (held) => {
+        secondEntered?.();
+        await hold;
+
+        return held();
+      },
+      timings,
+    );
+
+    expect(await slow).toBe(false);
+    // The slow holder has released by now; the lock on disk is still the second holder's.
+    await utimes(lock, new Date(), new Date());
+    expect(await readFile(lock, 'utf8')).not.toBe('');
+    releaseSecond?.();
+    expect(await second).toBe(true);
+    await expect(readFile(lock)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('a lock dated far in the future (the clock was set back) is abandoned too', async () => {
+    const file = join(dir, 'en.json');
+    const lock = await lockPathFor(file);
+    await writeFile(lock, 'dead');
+    const future = new Date(Date.now() + 3_600_000);
+    await utimes(lock, future, future);
+    expect(await withFileLock(file, async () => 'ran', { waitMs: 1000, staleMs: 500 })).toBe('ran');
+  });
+
+  it.skipIf(process.platform === 'win32')('the lock of a file under a symlinked folder is the same before and after its folders exist', async () => {
+    await mkdir(join(dir, 'real'));
+    await symlink(join(dir, 'real'), join(dir, 'locales'));
+    const file = join(dir, 'locales', 'fr', 'common.json');
+    const before = await lockPathFor(file);
+    await mkdir(join(dir, 'locales', 'fr'));
+    expect(await lockPathFor(file)).toBe(before);
+    await writeFile(file, '{}');
+    expect(await lockPathFor(file)).toBe(before);
+    expect(await lockPathFor(join(dir, 'real', 'fr', 'common.json'))).toBe(before);
   });
 });
