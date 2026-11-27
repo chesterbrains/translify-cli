@@ -14,6 +14,15 @@ describe('watch lines', () => {
     expect(pushLine('app', answer({ locales: { en: counts({ unchanged: 9 }) } }), 'en')).toBe('app: unchanged');
   });
 
+  it('pushLine names keys whose description or metadata changed, alone or after the counts', () => {
+    expect(pushLine('app', answer({ locales: { en: counts({ unchanged: 9 }) }, keysUpdated: 2 }), 'en')).toBe(
+      'app: 2 key(s) updated (description or metadata)',
+    );
+    expect(pushLine('app', answer({ locales: { en: counts({ created: 1 }) }, keysUpdated: 1 }), 'en')).toBe(
+      'app: 1 created, 1 key(s) updated (description or metadata)',
+    );
+  });
+
   it('pushLine says unchanged when the answer lacks the source locale', () => {
     expect(pushLine('app', answer({ locales: {} }), 'en')).toBe('app: unchanged');
   });
@@ -38,5 +47,8 @@ describe('watch lines', () => {
     const two = answer({ locales: { en: counts({ updated: 2, unchanged: 140 }) } });
 
     expect(startSummary([one, two], 'en')).toBe('pushed 2 namespace(s): 1 created, 2 updated, 240 unchanged');
+    expect(startSummary([one, answer({ locales: { en: counts({ unchanged: 3 }) }, keysUpdated: 4 })], 'en')).toBe(
+      'pushed 2 namespace(s): 1 created, 0 updated, 103 unchanged, 4 key(s) updated (description or metadata)',
+    );
   });
 });

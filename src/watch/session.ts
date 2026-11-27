@@ -159,7 +159,8 @@ export class WatchSession {
           }
           continue;
         }
-        this.unreadable.delete(match.path);
+        // Said, since it was said to be unreadable: the push that follows may be a silent "same bytes".
+        if (this.unreadable.delete(match.path)) this.deps.out(this.line(`${safeText(match.path)} can be read again.`));
       }
       next.set(match.path, { ...stat, hash, namespace: match.namespace });
       kept.push(match);
