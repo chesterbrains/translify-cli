@@ -585,7 +585,7 @@ otherwise the CLI stops before sending anything and names the files involved.
 |---|---|
 | `translify init` | Create `translify.json`: detects i18next, Flutter, Angular, Xcode, Android, Rails and Symfony layouts, asks for your key (interactive, or `--yes`) |
 | `translify login` | Store a secret key on this machine (interactive) |
-| `translify push` | Upload source and target files |
+| `translify push` | Upload source and target files; with `--watch`, keep pushing source files as you save them (see [Watch](#watch)) |
 | `translify pull` | Download translation files |
 | `translify status` | Exit 1 if local files differ from Translify |
 | `translify lint` | Exit 6 if translations in Translify have placeholder errors (or too many warnings) |
@@ -596,7 +596,7 @@ otherwise the CLI stops before sending anything and names the files involved.
 Options:
 
 - `init`: `-y/--yes` (no prompts: every detected rule, the suggested locale map, the key from `TRANSLIFY_SECRET_KEY` or a previous login; fails instead of overwriting), `--api-url <url>`
-- `push`: `--dry-run`, `--overwrite-targets`, `--prune`, `-y/--yes`, `--namespace <ns>`, `--status <draft|needs-review|approved>`
+- `push`: `--dry-run`, `--overwrite-targets`, `--prune`, `-y/--yes`, `--namespace <ns>`, `--status <draft|needs-review|approved>`, `--watch`, `--debounce <ms>` (with `--watch`: quiet time before a push, default 2000, minimum 500)
 - `pull` and `status`: `--from <working|env:slug>`, `--locale <locale>` (as named on disk), `--namespace <ns>`, `--only-approved`
 - `publish`: `--fail-on-withheld`, `--allow-errors`
 - `lint`: `--namespace <ns>`, `--locale <locale>` (as named on disk), `--severity <error|warning>` (only list cells whose worst issue is this severity; counts and the exit code are unaffected), `--max-warnings <n>`
@@ -690,6 +690,29 @@ After the server accepts the write, `set` updates the file for that locale and n
 - The existing entry is replaced in place, leaving the rest of the file as it was. A new entry is inserted: with `"jsonStyle": "nested"` (the default) missing parent objects are created, with `"flat"` one dotted key is added. The entry goes in sorted position when the file is already sorted the way `pull` writes it, else at the end of its object.
 - A file that does not exist yet is created, with its folders. It holds only that one key: run `translify pull` for the whole file.
 - A local problem found after the write (the check was skipped, the file changed in the meantime, or it could not be written) never fails the command: the server already holds the write, so `set` exits 0 and says what happened. `--json` prints `{ "response": …, "file": { "path", "action", "reason"? } }` so a script can see what happened to the file.
+
+## Watch
+
+`translify push --watch` keeps running and pushes your source files as you save them, so a key you add while coding is in Translify a moment later. It needs a key with the `PUSH` scope.
+
+```sh
+translify push --watch
+```
+
+```
+Watching 3 source file(s) (en) in 2 namespace(s). Ctrl-C to stop.
+12:04:02 pushed 2 namespace(s): 0 created, 0 updated, 240 unchanged
+12:04:31 app: 2 created, 1 updated
+         2 key(s) in Translify are not in your source files (app). Run translify push --prune when done.
+```
+
+- **What it pushes.** Only the files of the project's default locale (the source). It pushes everything once at the start, then, 2000 ms after the last save, the namespace whose file changed, one request per namespace. `--debounce <ms>` changes the quiet time (minimum 500). A file saved with the same content sends nothing. `--namespace <ns>` narrows the watch to one namespace.
+- **What it never does.** It never pushes target-locale files (bring translations down with `translify pull`), never archives a key and never overwrites a translation. `--watch` is refused together with `--prune`, `--overwrite-targets`, `--dry-run` or `--json`.
+- **Leftover keys.** A key you saved and then renamed or removed stays in Translify. The watch tells you how many keys are not in your source files whenever that number changes; run `translify push --prune` when you are done to review and trash them.
+- **Review.** With "Require review" on, every pushed save that changes an existing source text sends its approved translations back to review, as any push does. A half-written sentence saved to disk counts. Raise `--debounce` if your editor saves on its own.
+- **Errors.** A file the server refuses (invalid JSON, a bad key, a plan limit) is reported and the watch goes on; the next save of that file tries again. A network or server problem is retried by itself (`Retrying in 2 s.`, then 5, 15 and every 30). A key that is invalid, revoked or lacks the scope, an archived project, a CLI that is too old, or a changed default locale end the watch with the exit code a plain push uses.
+- **Stopping.** Ctrl-C lets a request already on its way finish, then exits 0. Press it again to leave at once (exit 130).
+- The watch polls the files twice a second instead of relying on file-system events, so it also works in Docker and on network drives.
 
 ## Conflict rules
 

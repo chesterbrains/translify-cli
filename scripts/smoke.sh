@@ -30,4 +30,15 @@ $CLI pull
 test -f locales/it/shop.json
 $CLI status
 $CLI publish production || echo "(create a 'production' environment to test publish)"
+# Watch: a saved source file is pushed by itself, and Ctrl-C ends the watch with 0.
+$CLI push --watch --debounce 500 > watch.log 2>&1 &
+watch_pid=$!
+for _ in $(seq 1 50); do grep -q '^Watching' watch.log && break; sleep 0.2; done
+grep -q '^Watching' watch.log || { echo "watch did not start"; cat watch.log; exit 1; }
+printf '{"cart":{"title":"Cart","total":"Total","watched":"Watched"}}' > locales/en/shop.json
+for _ in $(seq 1 50); do grep -q 'shop: 1 created' watch.log && break; sleep 0.2; done
+grep -q 'shop: 1 created' watch.log || { echo "watch did not push the new key"; cat watch.log; exit 1; }
+kill -INT "$watch_pid"
+wait "$watch_pid" || { echo "watch did not exit 0"; cat watch.log; exit 1; }
+
 echo "smoke OK in $work"
