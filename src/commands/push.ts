@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { safeText } from '../safe-text.js';
 import type { Config } from '../config.js';
 import type { ExitCode } from '../errors.js';
 import type { Api } from '../http.js';
@@ -170,7 +171,7 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
     })),
   );
   const show = (res: PushResponse, preview?: PushResponse): void => {
-    if (opts.json !== true) for (const warning of res.warnings ?? []) deps.out(`warning: ${warning}`);
+    if (opts.json !== true) for (const warning of res.warnings ?? []) deps.out(`warning: ${safeText(warning)}`);
     deps.out(
       opts.json === true
         ? JSON.stringify({ preview, response: res, summary: summarizePush(res) })

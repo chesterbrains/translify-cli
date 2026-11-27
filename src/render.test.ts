@@ -362,6 +362,25 @@ describe('renderLint', () => {
     });
   });
 
+  it('text from the server cannot drive the terminal: control characters print as escapes, in cells and key conflicts', () => {
+    const esc = '\x1b[2K\x1b[31m';
+    const nested = { apiUrl: 'http://x', files: [{ pattern: 'l/{locale}/{namespace}.json', format: 'json', jsonStyle: 'nested' }], locales: {} } as unknown as Config;
+    const raw: string = renderLint(
+      res({
+        summary: { errors: 1, warnings: 0, locales: [{ locale: `i${esc}t`, errors: 1, warnings: 0 }], keyConflicts: 1 },
+        cells: [cell({ namespace: `sh${esc}op`, key: `cart${esc}.items\nfake line`, locale: `i${esc}t`, issues: [{ code: `ODD${esc}`, severity: 'ERROR', arg: `a${esc}` }] })],
+        keyConflicts: [{ namespace: `sh${esc}op`, key: `ca${esc}rt`, below: [`ca${esc}rt.title`], belowCount: 1 }],
+        keyConflictsTruncated: false,
+      }),
+      nested,
+    );
+    // Only this CLI's own colour codes may remain; none of the server's sequences, and no line it could have faked.
+    expect(raw).not.toContain('\x1b[2K');
+    expect(stripVTControlCharacters(raw)).toContain('  cart\\x1b[2K\\x1b[31m.items\\nfake line');
+    expect(stripVTControlCharacters(raw)).toContain('  ca\\x1b[2K\\x1b[31mrt  above  ca\\x1b[2K\\x1b[31mrt.title');
+    expect(stripVTControlCharacters(raw).split('\n')).not.toContain('fake line');
+  });
+
   it('words every known issue code', () => {
     const issues = [
       { code: 'PLACEHOLDER_EXTRA', severity: 'ERROR', arg: 'total' },

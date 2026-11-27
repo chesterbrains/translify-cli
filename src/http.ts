@@ -1,3 +1,4 @@
+import { safeText } from './safe-text.js';
 import { CliError, EXIT, ONLY_APPROVED_NEEDS_WORKING, type ExitCode } from './errors.js';
 import { USER_AGENT } from './version.js';
 
@@ -79,7 +80,8 @@ const validationLines = (errors: unknown): string => {
 };
 
 const describeBody = (status: number, body: ErrorBody): string => {
-  const text: string = Array.isArray(body.message) ? body.message.join('; ') : (body.message ?? '');
+  // The server's own words, shown on stderr: never let them drive the terminal.
+  const text: string = safeText(Array.isArray(body.message) ? body.message.join('; ') : (body.message ?? ''));
 
   switch (body.code) {
     case 'KEY_INVALID':
