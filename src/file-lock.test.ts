@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { BUSY, lockFolder, lockPathFor, removeIfStale, withFileLock } from './file-lock.js';
+import { BUSY, cacheLockFolder, legacyLockPathFor, lockFolder, lockPathFor, removeIfStale, withFileLock } from './file-lock.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -221,11 +221,20 @@ describe('lockFolder', () => {
     expect((await lockPathFor(join(dir, 'en.json'))).startsWith(`${await lockFolder()}`)).toBe(true);
   });
 
-  it.skipIf(process.platform === 'win32')('refuses a folder of that name that belongs to someone else, or is not a folder', async () => {
+  it.skipIf(process.platform === 'win32')('a folder of that name that belongs to someone else, or is not a folder, sends the locks to the cache folder', async () => {
+    const fallback = join(dir, 'cache', 'translify', 'locks');
+    // Owned by this user, so not by uid 12345: to that user both folders are someone else's, and nothing is trusted.
     await mkdir(join(dir, 'translify-12345'));
-    await expect(lockFolder(dir, 12345)).rejects.toThrow(/not a folder owned by this user/);
-    await writeFile(join(dir, 'translify-777'), 'x');
-    await expect(lockFolder(dir, 777)).rejects.toMatchObject({ code: 'EEXIST' });
+    await expect(lockFolder(dir, 12345, join(dir, 'also-not-theirs'))).rejects.toThrow(/not a folder owned by this user/);
+    await writeFile(join(dir, `translify-${process.getuid?.()}`), 'a file, not a folder');
+    expect(await lockFolder(dir, process.getuid?.() ?? null, fallback)).toBe(fallback);
+    expect((await stat(fallback)).mode & 0o777).toBe(0o700);
+  });
+
+  it('a passing error from the temp folder is not a reason to lock somewhere else', async () => {
+    // A base that cannot exist: mkdir fails with ENOENT below a file... use a NUL byte, which every platform refuses outright.
+    await expect(lockFolder(join(dir, 'bad\0name'), null, join(dir, 'fallback'))).rejects.toBeDefined();
+    await expect(stat(join(dir, 'fallback'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it.skipIf(process.platform === 'win32')('closes a folder of its own that was left open to others', async () => {
@@ -238,5 +247,91 @@ describe('lockFolder', () => {
 
   it('without a uid (Windows) the folder has a fixed name', async () => {
     expect(await lockFolder(dir, null)).toBe(join(dir, 'translify-locks'));
+  });
+});
+
+describe('cacheLockFolder', () => {
+  it('follows XDG_CACHE_HOME when absolute, LOCALAPPDATA on Windows, else ~/.cache', () => {
+    expect(cacheLockFolder({ XDG_CACHE_HOME: join(dir, 'xdg') }, 'linux')).toBe(join(dir, 'xdg', 'translify', 'locks'));
+    expect(cacheLockFolder({ XDG_CACHE_HOME: 'relative' }, 'linux')).toMatch(/[\\/]\.cache[\\/]translify[\\/]locks$/);
+    expect(cacheLockFolder({ LOCALAPPDATA: join(dir, 'local') }, 'win32')).toBe(join(dir, 'local', 'translify', 'locks'));
+    expect(cacheLockFolder({ LOCALAPPDATA: join(dir, 'local') }, 'linux')).toMatch(/[\\/]\.cache[\\/]translify[\\/]locks$/);
+  });
+});
+
+describe('the lock CLI 0.13.4 used', () => {
+  // These write into the real temp folder, where 0.13.4 kept its lock: never leave one behind, pass or fail.
+  afterEach(async () => {
+    const legacy = await legacyLockPathFor(join(dir, 'en.json'));
+    await rm(legacy, { recursive: true, force: true });
+    await rm(`${legacy}.takeover`, { force: true });
+  });
+
+  it('is held alongside the new one, so an older CLI waits; both are gone afterwards', async () => {
+    const file = join(dir, 'en.json');
+    const legacy = await legacyLockPathFor(file);
+    const lock = await lockPathFor(file);
+    expect(legacy).not.toBe(lock);
+    const during = await withFileLock(file, async (held) => [await readFile(legacy, 'utf8'), await readFile(lock, 'utf8'), await held()]);
+    expect(during).toEqual([expect.stringMatching(/^[0-9a-f]{32}$/), expect.stringMatching(/^[0-9a-f]{32}$/), true]);
+    expect((during as string[])[0]).toBe((during as string[])[1]);
+    await expect(readFile(legacy)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(lock)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('a live one held by an older CLI makes this version wait and give up BUSY, releasing its own lock', async () => {
+    const file = join(dir, 'en.json');
+    const legacy = await legacyLockPathFor(file);
+    await writeFile(legacy, 'older cli');
+    try {
+      expect(await withFileLock(file, async () => 'ran', { waitMs: 60, staleMs: 60_000 })).toBe(BUSY);
+      expect(await readFile(legacy, 'utf8')).toBe('older cli');
+      await expect(readFile(await lockPathFor(file))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(legacy, { force: true });
+    }
+  });
+
+  it('a dead one is taken over; one that cannot be used at all does not stop this version', async () => {
+    const file = join(dir, 'en.json');
+    const legacy = await legacyLockPathFor(file);
+    await writeFile(legacy, 'dead');
+    const old = new Date(Date.now() - 60_000);
+    await utimes(legacy, old, old);
+    expect(await withFileLock(file, async () => 'ran', { waitMs: 1000, staleMs: 500 })).toBe('ran');
+    await expect(readFile(legacy)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    // A folder where the lock file should be: creating and reading it both fail.
+    await mkdir(legacy);
+    try {
+      expect(await withFileLock(file, async (held) => held(), { waitMs: 1000, staleMs: 500 })).toBe(true);
+    } finally {
+      await rm(legacy, { recursive: true, force: true });
+    }
+  });
+
+  it('waiting for an older CLI does not let this run\'s own lock grow stale', async () => {
+    const file = join(dir, 'en.json');
+    const legacy = await legacyLockPathFor(file);
+    const lock = await lockPathFor(file);
+    await writeFile(legacy, 'older cli');
+    // The older CLI lets go after 150 ms, longer than the stale limit used here.
+    setTimeout(() => void rm(legacy, { force: true }), 150);
+    const age = await withFileLock(file, async () => Date.now() - (await stat(lock)).mtimeMs, { waitMs: 2000, staleMs: 100 });
+    expect(age).toBeLessThan(100);
+  });
+
+  it('losing it to an older CLI while stalled counts as losing the lock', async () => {
+    const file = join(dir, 'en.json');
+    const legacy = await legacyLockPathFor(file);
+    const result = await withFileLock(file, async (held) => {
+      await writeFile(legacy, 'older cli took over');
+
+      return held();
+    });
+    expect(result).toBe(false);
+    // Not this run's token any more, so the release leaves it alone.
+    expect(await readFile(legacy, 'utf8')).toBe('older cli took over');
+    await rm(legacy, { force: true });
   });
 });
