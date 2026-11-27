@@ -108,7 +108,11 @@ export async function runLint(opts: LintOptions, deps: LintDeps): Promise<ExitCo
   const { errors, warnings } = res.summary;
   deps.out(
     opts.json === true
-      ? JSON.stringify({ response: res, summary: { errors, warnings, truncated: res.truncated, keyConflicts: res.summary.keyConflicts ?? 0 } })
+      ? // `keyConflicts` only when the server reports them: an older server's output stays byte for byte what it was.
+        JSON.stringify({
+          response: res,
+          summary: { errors, warnings, truncated: res.truncated, ...(res.summary.keyConflicts === undefined ? {} : { keyConflicts: res.summary.keyConflicts }) },
+        })
       : renderLint(res, deps.config, { severity: opts.severity }),
   );
 

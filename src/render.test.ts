@@ -322,8 +322,39 @@ describe('renderLint', () => {
       );
       expect(out.slice(0, 4)).toEqual(['shop', '  cart.items', '    it       error    missing placeholder {count}', '']);
       expect(out[4]).toBe('Keys that are also the path above other keys (2):');
-      expect(out).toContain('Showing the first 2 of 450 in the project. Narrow with --namespace, or use --json.');
+      expect(out).toContain('The server listed only the first 2 of 450 such keys in the namespaces linted, so this list may be incomplete.');
       expect(out.slice(-2)).toEqual(['', '✖ 1 error, 0 warnings — it 1/0']);
+    });
+
+    it('a namespace owned by a fixed-namespace rule is judged by that rule alone, as pull writes it', () => {
+      const wildcardNested = { pattern: 'l/{locale}/{namespace}.json', format: 'json', jsonStyle: 'nested' };
+      // `shop` goes to Android (holds both), `admin` to flat JSON: the nested wildcard writes neither.
+      const owned = withRules([
+        wildcardNested,
+        { pattern: 'app/values-{locale}/strings.xml', format: 'android', namespace: 'shop' },
+        { pattern: 'l/{locale}/admin.json', format: 'json', jsonStyle: 'flat', namespace: 'admin' },
+      ]);
+      expect(lines(res(conflicts), owned)).toEqual(['✔ No issues in 1 locale(s).']);
+
+      // Only `shop` is owned: `admin` still falls to the nested wildcard.
+      const half = withRules([wildcardNested, { pattern: 'app/values-{locale}/strings.xml', format: 'android', namespace: 'shop' }]);
+      expect(lines(res(conflicts), half).slice(0, 3)).toEqual([
+        'Keys that are also the path above other keys (1):',
+        'admin',
+        '  panel  above  panel.title',
+      ]);
+
+      // Two fixed rules for one namespace, one of them nested: it is listed.
+      const both = withRules([
+        { pattern: 'app/values-{locale}/strings.xml', format: 'android', namespace: 'shop' },
+        { pattern: 'l/{locale}/shop.json', format: 'json', jsonStyle: 'nested', namespace: 'shop' },
+      ]);
+      expect(lines(res(conflicts), both)[1]).toBe('shop');
+    });
+
+    it('a count below the names sent never prints a negative remainder', () => {
+      const odd = { ...conflicts, keyConflicts: [{ namespace: 'shop', key: 'cart', below: ['cart.a', 'cart.b', 'cart.c', 'cart.d', 'cart.e'], belowCount: 2 }] };
+      expect(lines(res(odd), nested)[2]).toBe('  cart  above  cart.a, cart.b, cart.c (+2 more)');
     });
 
     it('a server that does not send them yet changes nothing', () => {

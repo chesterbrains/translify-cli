@@ -244,8 +244,13 @@ const MAX_BELOW_SHOWN = 3;
  * listed, since every other layout keeps both keys. Informational: never an error or a warning.
  */
 export function renderKeyConflicts(res: LintResponse, config: Config): string[] {
-  const outcomes = (namespace: string): Set<'json' | 'rails'> =>
-    new Set(config.files.flatMap((rule) => (rule.namespace === undefined || rule.namespace === namespace ? (conflictOutcome(rule) ?? []) : [])));
+  // As in pull: a namespace that a fixed-namespace rule owns is written by those rules only, never by a `{namespace}` one.
+  const outcomes = (namespace: string): Set<'json' | 'rails'> => {
+    const fixed: FileRule[] = config.files.filter((rule) => rule.namespace === namespace);
+    const writers: FileRule[] = fixed.length > 0 ? fixed : config.files.filter((rule) => rule.namespace === undefined);
+
+    return new Set(writers.flatMap((rule) => conflictOutcome(rule) ?? []));
+  };
   const shown = (res.keyConflicts ?? []).filter((conflict) => outcomes(conflict.namespace).size > 0);
   if (shown.length === 0) return [];
 
@@ -255,11 +260,12 @@ export function renderKeyConflicts(res: LintResponse, config: Config): string[] 
   for (const conflict of shown) {
     if (conflict.namespace !== namespace) lines.push(conflict.namespace);
     namespace = conflict.namespace;
-    const more: number = conflict.belowCount - Math.min(conflict.below.length, MAX_BELOW_SHOWN);
+    const more: number = Math.max(conflict.belowCount, conflict.below.length) - Math.min(conflict.below.length, MAX_BELOW_SHOWN);
     lines.push(`  ${conflict.key}  above  ${conflict.below.slice(0, MAX_BELOW_SHOWN).join(', ')}${more > 0 ? ` (+${more} more)` : ''}`);
   }
   if (res.keyConflictsTruncated === true) {
-    lines.push(pc.yellow(`Showing the first ${res.keyConflicts?.length ?? 0} of ${res.summary.keyConflicts ?? 0} in the project. Narrow with --namespace, or use --json.`));
+    // The server's count covers every namespace that was linted, also ones no nested rule here writes.
+    lines.push(pc.yellow(`The server listed only the first ${res.keyConflicts?.length ?? 0} of ${res.summary.keyConflicts ?? 0} such keys in the namespaces linted, so this list may be incomplete.`));
   }
   if (kinds.has('json')) {
     lines.push('A nested JSON file cannot hold both: `pull` writes one and drops the other. Set "jsonStyle": "flat" on the files rule, or rename one of the two keys.');

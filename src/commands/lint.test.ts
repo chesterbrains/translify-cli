@@ -134,7 +134,7 @@ describe('runLint', () => {
 
     expect(code).toBe(EXIT.issues);
     expect(out).toHaveLength(1);
-    expect(JSON.parse(out[0]!)).toEqual({ response: ERRORS, summary: { errors: 1, warnings: 0, truncated: false, keyConflicts: 0 } });
+    expect(JSON.parse(out[0]!)).toEqual({ response: ERRORS, summary: { errors: 1, warnings: 0, truncated: false } });
   });
 
   it('explains a server too old for lint (plain 404, no code)', async () => {
