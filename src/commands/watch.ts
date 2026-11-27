@@ -3,6 +3,7 @@ import type { PathContext } from '../patterns.js';
 import type { SessionDeps, TickResult } from '../watch/session.js';
 import type { PushOptions } from './push.js';
 import { EXIT } from '../errors.js';
+import { findFiles } from '../patterns.js';
 import { safeText } from '../safe-text.js';
 import { WatchSession } from '../watch/session.js';
 
@@ -80,6 +81,9 @@ export async function runWatch(opts: PushOptions, deps: WatchDeps): Promise<Exit
   }
   const context: PathContext = { defaultLocale, ...(Array.isArray(me.locales) ? { locales: me.locales } : {}) };
 
+  // A broken rule set fails here as it does for a plain push; once the watch runs, the same error only skips a poll.
+  await (deps.find ?? findFiles)(deps.config, deps.cwd, context);
+
   let stopping: boolean = false;
   let wake: () => void = () => undefined;
   const session: WatchSession = new WatchSession(
@@ -89,6 +93,8 @@ export async function runWatch(opts: PushOptions, deps: WatchDeps): Promise<Exit
   );
 
   await session.scan(deps.now());
+  // Something broke between the check above and the first poll, and the poll has said what.
+  if (session.problem !== undefined) return EXIT.failed;
   if (session.files.length === 0) {
     const scope: string = opts.namespace === undefined ? '' : ` for namespace "${opts.namespace}"`;
     deps.err(`No files matched the translify.json patterns for the source locale ${safeText(defaultLocale)}${scope}.`);

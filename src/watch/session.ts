@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 
 import type { PushResponse, PushStatusFlag, Upload } from '../commands/push.js';
 import type { Config } from '../config.js';
+import type { ExitCode } from '../errors.js';
 import type { Api } from '../http.js';
 import type { Match, PathContext } from '../patterns.js';
-import type { ExitCode } from '../errors.js';
 import { buildForm, PUSH_PATH } from '../commands/push.js';
 import { CliError, EXIT } from '../errors.js';
 import { findFiles } from '../patterns.js';
@@ -38,15 +38,26 @@ export interface SessionDeps {
   read: (path: string) => Promise<Uint8Array<ArrayBuffer>>;
   /** True once a stop signal arrived: no new request is started. */
   stopping: () => boolean;
+  /** `findFiles`, replaceable in tests. */
+  find?: typeof findFiles;
 }
 
 interface Seen extends FileStat {
   hash: string;
   namespace: string;
+  /** Not there at the last poll. Gone for good only when the next poll misses it too. */
+  missing?: boolean;
 }
 
-/** A file this young may be saved again inside the file system's mtime granularity: never trust its stat. */
-const YOUNG_MS: number = 3000;
+/** One push pass: its time, and the backoff it has set, if any. */
+interface Attempt {
+  nowMs: number;
+  retry: { step: number; delay: number } | undefined;
+}
+
+interface Whoami {
+  project?: { defaultLocale: string | null };
+}
 
 /** `continue`, or the exit code the watch ends with. */
 export type TickResult = 'continue' | ExitCode;
@@ -54,9 +65,8 @@ export type TickResult = 'continue' | ExitCode;
 /** Wait before the same push is sent again; the last one repeats. */
 export const BACKOFF_MS: readonly number[] = [2000, 5000, 15_000, 30_000];
 
-interface Whoami {
-  project?: { defaultLocale: string | null };
-}
+/** A file this young may be saved again inside the file system's mtime granularity: never trust its stat. */
+const YOUNG_MS: number = 3000;
 
 export const hashOf = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
@@ -71,13 +81,16 @@ export class WatchSession {
   files: readonly Match[] = [];
   /** How long the last scan took, for the loop's stretch. */
   lastScanMs: number = 0;
+  /** Why the last poll could not list the files (a rule clash, a file-system error); undefined after a clean one. */
+  problem: string | undefined;
 
   /** What the last scan saw, by path. */
   private seen: Map<string, Seen> = new Map();
   private lastChangeAt: number = 0;
   private retryAttempt: number = 0;
   private retryAt: number = 0;
-  private scanError: string | undefined;
+  /** Paths already reported as unreadable. */
+  private readonly unreadable: Set<string> = new Set();
   /** Per namespace, the hash of each file last sent and answered (accepted or refused): those bytes are not sent again. */
   private readonly attempted: Map<string, Map<string, string>> = new Map();
   /** Per namespace, the orphan count last told. */
@@ -106,19 +119,21 @@ export class WatchSession {
   private async poll(nowMs: number): Promise<string[]> {
     let matches: Match[];
     try {
-      matches = (await findFiles(this.deps.config, this.deps.cwd, this.source.context)).filter(
+      matches = (await (this.deps.find ?? findFiles)(this.deps.config, this.deps.cwd, this.source.context)).filter(
         (match) =>
           match.locale === this.source.defaultLocale && (this.opts.namespace === undefined || match.namespace === this.opts.namespace),
       );
     } catch (error) {
-      if (!(error instanceof CliError)) throw error;
-      // The same clash would otherwise print on every poll: say it once, and again only when it changes.
-      if (error.message !== this.scanError) this.deps.err(this.line(error.message));
-      this.scanError = error.message;
+      // A rule clash, or the file system itself (a folder unreadable mid-checkout): never the end of the watch.
+      const message: string =
+        error instanceof CliError ? error.message : `Could not list the project files: ${error instanceof Error ? error.message : String(error)}`;
+      // It would otherwise print on every poll: say it once, and again only when it changes or comes back.
+      if (message !== this.problem) this.deps.err(this.line(message));
+      this.problem = message;
 
       return [];
     }
-    this.scanError = undefined;
+    this.problem = undefined;
 
     const next: Map<string, Seen> = new Map();
     const kept: Match[] = [];
@@ -135,30 +150,38 @@ export class WatchSession {
       else {
         try {
           hash = hashOf(await this.deps.read(match.path));
-        } catch {
-          // Unreadable right now (mid-save, permissions): keep what was known, a later poll sees the change.
+        } catch (error) {
+          this.cannotRead(match.path, error);
+          // Keep what was known; a later poll that can read it sees the change.
           if (before !== undefined) {
-            next.set(match.path, before);
+            next.set(match.path, { ...before, missing: false });
             kept.push(match);
           }
           continue;
         }
+        this.unreadable.delete(match.path);
       }
       next.set(match.path, { ...stat, hash, namespace: match.namespace });
       kept.push(match);
       if (before === undefined || before.hash !== hash) marked.add(match.namespace);
     }
 
-    const remaining: Set<string> = new Set([...next.values()].map((file) => file.namespace));
+    const present: Set<string> = new Set([...next.values()].map((file) => file.namespace));
     const emptied: Set<string> = new Set();
+    const waiting: Array<[string, Seen]> = [];
     for (const [path, before] of this.seen) {
       if (next.has(path)) continue;
-      if (remaining.has(before.namespace)) marked.add(before.namespace);
+      // One miss may be the gap between a delete and a write (an editor, a checkout): wait for the next poll.
+      if (before.missing !== true) waiting.push([path, { ...before, missing: true }]);
+      else if (present.has(before.namespace)) marked.add(before.namespace);
       else emptied.add(before.namespace);
     }
+    for (const [path, file] of waiting) next.set(path, file);
     for (const namespace of emptied) {
+      // Another of its files may still be waiting for its second miss.
+      if (waiting.some(([, file]) => file.namespace === namespace)) continue;
       // Its last source file went away: nothing to push, and an empty push would only list every key as an orphan.
-      this.forget(namespace);
+      this.dirty.delete(namespace);
       this.deps.out(this.line(`${safeText(namespace)}: no source file left, nothing pushed`));
     }
 
@@ -175,15 +198,20 @@ export class WatchSession {
     return [...marked];
   }
 
-  /** A namespace that has no source file any more. */
-  private forget(namespace: string): void {
-    this.dirty.delete(namespace);
-    this.attempted.delete(namespace);
+  /** Said once per path, until it was read again. */
+  private cannotRead(path: string, error: unknown): void {
+    if (this.unreadable.has(path)) return;
+    this.unreadable.add(path);
+    const code: unknown = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+    const why: string = typeof code === 'string' ? code : error instanceof Error ? error.message : String(error);
+    this.deps.err(this.line(`${safeText(path)} cannot be read (${safeText(why)}); it is not pushed until it can be.`));
   }
 
   /** One poll, then a push when one is due. `immediate` skips the quiet period: the push a watch starts with. */
   async tick(nowMs: number, immediate: boolean = false): Promise<TickResult> {
     await this.scan(nowMs);
+    // The file list could not be read (the poll said why): pushing from the previous one could send half a state.
+    if (this.problem !== undefined || this.deps.stopping()) return 'continue';
     if (this.dirty.size === 0 || nowMs < this.retryAt) return 'continue';
     if (!immediate && nowMs - this.lastChangeAt < this.opts.debounceMs) return 'continue';
 
@@ -191,12 +219,13 @@ export class WatchSession {
   }
 
   private async pass(nowMs: number, immediate: boolean): Promise<TickResult> {
+    const attempt: Attempt = { nowMs, retry: undefined };
     // Read again before every pass: after a default switch these files would go up as targets of the new default.
     let me: Whoami;
     try {
       me = await this.deps.api.get<Whoami>('/cli/v1/whoami');
     } catch (error) {
-      const outcome: TickResult | 'next' = this.failed(undefined, error, nowMs);
+      const outcome: TickResult | 'next' = this.failed(undefined, error, attempt);
 
       return outcome === 'next' ? 'continue' : outcome;
     }
@@ -229,16 +258,15 @@ export class WatchSession {
       try {
         res = await this.deps.api.post<PushResponse>(PUSH_PATH, buildForm(uploads, { status: this.opts.status }, false, false));
       } catch (error) {
-        const outcome: TickResult | 'next' = this.failed({ namespace, hashes }, error, nowMs);
-        if (outcome === 'next') continue;
-        // A retryable failure ends the pass (the rest would fail the same way); a stop ends the watch.
+        const outcome: TickResult | 'next' = this.failed({ namespace, hashes }, error, attempt);
+        // Refused, or to be retried: either way the next namespace still goes. Only a stop ends the pass.
+        if (outcome === 'next' || outcome === 'continue') continue;
         result = outcome;
         break;
       }
 
       this.attempted.set(namespace, hashes);
       this.dirty.delete(namespace);
-      this.retryAttempt = 0;
       const notes: string[] = [...followUps(res), ...this.orphanLines(namespace, res)].map((text) => `${INDENT}${text}`);
       if (immediate) {
         pushed.push(res);
@@ -252,25 +280,36 @@ export class WatchSession {
       this.deps.out(this.line(startSummary(pushed, this.source.defaultLocale)));
       for (const note of extras) this.deps.out(note);
     }
+    // The backoff grows while something keeps failing, whatever else went through meanwhile.
+    if (attempt.retry === undefined) this.retryAttempt = 0;
 
     return result;
   }
 
-  /** The namespace's source files as read now, or undefined when one cannot be read. */
+  /** The namespace's source files as read now, or undefined when there is none or one cannot be read. */
   private async uploadsOf(namespace: string): Promise<Upload[] | undefined> {
     const matches: Match[] = this.files.filter((match) => match.namespace === namespace);
-    try {
-      return await Promise.all(
-        matches.map(async (match, index) => ({ match, field: `file${index}`, bytes: await this.deps.read(match.path) })),
-      );
-    } catch {
-      // Gone or unreadable since the poll (an editor mid-save). Not pushed now, and forgotten as seen, so the
-      // next poll that can read it marks the namespace again even when the bytes are the ones seen before.
+    const uploads: Upload[] = [];
+    for (const [index, match] of matches.entries()) {
+      try {
+        uploads.push({ match, field: `file${index}`, bytes: await this.deps.read(match.path) });
+      } catch (error) {
+        // Gone or unreadable since the poll (an editor mid-save). Not pushed now, and forgotten as seen, so the
+        // next poll that can read it marks the namespace again even when the bytes are the ones seen before.
+        this.cannotRead(match.path, error);
+        this.dirty.delete(namespace);
+        for (const file of matches) this.seen.delete(file.path);
+
+        return undefined;
+      }
+    }
+    if (uploads.length === 0) {
       this.dirty.delete(namespace);
-      for (const match of matches) this.seen.delete(match.path);
 
       return undefined;
     }
+
+    return uploads;
   }
 
   private sameAsAttempted(namespace: string, hashes: Map<string, string>): boolean {
@@ -289,35 +328,48 @@ export class WatchSession {
 
   /**
    * A failed request, by `watchVerdict`. `next`: these files were refused and are not sent again until they
-   * change. `continue`: nothing wrong with the files, the pass ends and goes again after a backoff. An exit
-   * code: the watch ends. `pushing` is absent for the whoami read.
+   * change. `continue`: nothing wrong with the files; they stay dirty and the pass runs again after a backoff,
+   * set once per pass. An exit code: the watch ends. `pushing` is absent for the whoami read.
    */
   private failed(
     pushing: { namespace: string; hashes: Map<string, string> } | undefined,
     error: unknown,
-    nowMs: number,
+    attempt: Attempt,
   ): TickResult | 'next' {
     const verdict = watchVerdict(error);
     // `watchVerdict` rethrows anything else; the message is the CLI's own wording, already safe to print.
     const { message, exitCode } = error as CliError;
-    const text: string = message.split('\n').join(`\n${INDENT}`);
-    const label: string = pushing === undefined ? '' : `${safeText(pushing.namespace)}: `;
+    const [first = '', ...rest] = message.split('\n');
+    const say = (head: string): void => {
+      this.deps.err(this.line([head, ...rest.map((row) => `${INDENT}${row}`)].join('\n')));
+    };
+    const labelled: string = `${pushing === undefined ? '' : `${safeText(pushing.namespace)}: `}${first}`;
     if (verdict === 'stop') {
-      this.deps.err(this.line(text));
+      say(first);
 
       return exitCode;
     }
     if (verdict === 'wait' && pushing !== undefined) {
       this.attempted.set(pushing.namespace, pushing.hashes);
       this.dirty.delete(pushing.namespace);
-      this.deps.err(this.line(`${label}${text}`));
+      say(labelled);
 
       return 'next';
     }
-    const delay: number = BACKOFF_MS[Math.min(this.retryAttempt, BACKOFF_MS.length - 1)]!;
-    this.retryAttempt += 1;
-    this.retryAt = nowMs + delay;
-    this.deps.err(this.line(`${label}${text} Retrying in ${delay / 1000} s.`));
+
+    if (attempt.retry === undefined) {
+      const step: number = this.retryAttempt;
+      const delay: number = BACKOFF_MS[Math.min(step, BACKOFF_MS.length - 1)]!;
+      this.retryAttempt += 1;
+      this.retryAt = attempt.nowMs + delay;
+      attempt.retry = { step, delay };
+    }
+    const { step, delay } = attempt.retry;
+    const last: number = BACKOFF_MS.length - 1;
+    // Leaving: no promise of a retry. Past the last step the same line would repeat every 30 s for as long as it lasts.
+    if (this.deps.stopping()) say(labelled);
+    else if (step < last) say(`${labelled} Retrying in ${delay / 1000} s.`);
+    else if (step === last) say(`${labelled} Retrying every ${delay / 1000} s.`);
 
     return 'continue';
   }

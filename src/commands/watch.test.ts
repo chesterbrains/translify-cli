@@ -186,20 +186,48 @@ describe('runWatch', () => {
     expect(h.removed).toHaveBeenCalledTimes(1);
   });
 
-  it('--debounce reaches the session', async () => {
-    const h = await setup();
-    const running = runWatch({ watch: true, debounce: '60000' }, h.deps);
-    await h.parked(1);
-    // A change now would wait a minute: nothing but the start push goes out over the next polls.
-    h.file.text = '{"a":"B"}';
-    h.file.mtimeMs = 5;
-    h.sleeps[0]!.wake();
-    await h.parked(2);
-    h.sleeps[1]!.wake();
-    await h.parked(3);
-    expect(h.post).toHaveBeenCalledTimes(1);
+  it('--debounce reaches the session: 500 pushes a change the default 2000 would still hold', async () => {
+    const run = async (debounce: string | undefined): Promise<number> => {
+      const h = await setup();
+      const running = runWatch({ watch: true, ...(debounce === undefined ? {} : { debounce }) }, h.deps);
+      await h.parked(1);
+      // Each poll is 500 ms of the fake clock later: one to see the save, one more after the quiet time.
+      h.file.text = '{"a":"B"}';
+      h.file.mtimeMs = 5;
+      for (let index = 0; index < 2; index += 1) {
+        h.sleeps[index]!.wake();
+        await h.parked(index + 2);
+      }
+      h.signal();
+      await running;
 
+      return h.post.mock.calls.length;
+    };
+
+    expect(await run('500')).toBe(2);
+    expect(await run(undefined)).toBe(1);
+  });
+
+  it('the project default locale reaches the file rules: an Android values/ folder is the source', async () => {
+    const h = await setup({ 'res/values/strings.xml': '<resources/>', 'res/values-it/strings.xml': '<resources/>' });
+    h.deps.config.files = [{ pattern: 'res/values-{locale}/strings.xml', format: 'android', namespace: 'app' }];
+    const running = runWatch({ watch: true }, h.deps);
+    await h.parked(1);
+
+    expect(h.out[0]).toBe('Watching 1 source file(s) (en) in 1 namespace(s). Ctrl-C to stop.');
+    const manifest = JSON.parse((h.post.mock.calls[0]![1] as FormData).get('manifest') as string);
+    expect(manifest).toEqual([expect.objectContaining({ path: 'res/values/strings.xml', locale: 'en', format: 'android' })]);
     h.signal();
     await running;
+  });
+
+  it('a rule clash at start is the only thing said', async () => {
+    const h = await setup();
+    h.deps.config.files.push({ pattern: 'locales/{locale}/cart.json', format: 'json', jsonStyle: 'nested', namespace: 'cart' });
+
+    // The plain CLI error, as `translify push` reports it; not followed by "No files matched".
+    await expect(runWatch({ watch: true }, h.deps)).rejects.toThrow('locales/en/cart.json is matched by more than one files rule.');
+    expect(h.err).toEqual([]);
+    expect(h.get).toHaveBeenCalledTimes(1);
   });
 });

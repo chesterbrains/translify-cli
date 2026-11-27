@@ -11,7 +11,8 @@ export const INDENT: string = ' '.repeat(9);
 
 /** `app: 2 created, 1 updated`, from the source locale's counts; `app: unchanged` when it wrote nothing or the locale is absent. */
 export const pushLine = (namespace: string, res: PushResponse, sourceLocale: string): string => {
-  const counts: PushResponse['locales'][string] | undefined = res.locales[sourceLocale];
+  // Read defensively: a proxy's 200 is not always the server's answer.
+  const counts: PushResponse['locales'][string] | undefined = res.locales?.[sourceLocale];
   const parts: string[] = [];
   if (counts !== undefined && counts.created !== 0) parts.push(`${safeCount(counts.created)} created`);
   if (counts !== undefined && counts.updated !== 0) parts.push(`${safeCount(counts.updated)} updated`);
@@ -21,7 +22,7 @@ export const pushLine = (namespace: string, res: PushResponse, sourceLocale: str
 
 /** What a push has to add beyond its counts; the wording of the plain push where one exists. */
 export const followUps = (res: PushResponse): string[] => {
-  const lines: string[] = (res.warnings ?? []).map((warning) => `warning: ${safeText(warning)}`);
+  const lines: string[] = (Array.isArray(res.warnings) ? res.warnings : []).map((warning) => `warning: ${safeText(warning)}`);
   const stale: number = res.staleReset ?? 0;
   if (stale > 0) lines.push(`${safeCount(stale)} approved translation(s) went back to review because their source text changed.`);
   const restored: number = res.keysRestored ?? 0;
@@ -36,7 +37,7 @@ export const orphanNote = (namespace: string, count: number): string =>
 /** One line for the push of everything a watch starts with. */
 export const startSummary = (results: PushResponse[], sourceLocale: string): string => {
   const sum = (field: 'created' | 'updated' | 'unchanged'): number =>
-    results.reduce((total, res) => total + (Number(res.locales[sourceLocale]?.[field]) || 0), 0);
+    results.reduce((total, res) => total + (Number(res.locales?.[sourceLocale]?.[field]) || 0), 0);
 
   return `pushed ${results.length} namespace(s): ${sum('created')} created, ${sum('updated')} updated, ${sum('unchanged')} unchanged`;
 };

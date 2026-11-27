@@ -6,6 +6,7 @@ import { vi, type Mock } from 'vitest';
 import type { Config } from '../config.js';
 import type { PushResponse } from '../commands/push.js';
 import type { FileStat, SessionDeps, WatchOptions } from './session.js';
+import { findFiles } from '../patterns.js';
 import { WatchSession } from './session.js';
 
 /** Test-only: a project folder whose files exist on disk (for the glob) and whose stat / bytes the test controls. */
@@ -17,6 +18,8 @@ export interface Harness {
   post: Mock;
   read: Mock;
   stopping: { value: boolean };
+  /** Failures to inject: paths whose read rejects, and an error the glob throws. */
+  fail: { read: Set<string>; glob: Error | undefined };
   /** Create or rewrite a file; `mtimeMs` defaults to 0 (long settled). */
   put: (path: string, content: string, mtimeMs?: number) => Promise<void>;
   remove: (path: string) => Promise<void>;
@@ -66,17 +69,18 @@ export const harness = async (
   const post: Mock = vi.fn().mockResolvedValue(answer());
   const read: Mock = vi.fn(async (path: string) => {
     const file = disk.get(path);
-    if (file === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    if (file === undefined || fail.read.has(path)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 
     return file.bytes;
   });
   const stopping = { value: false };
+  const fail: Harness['fail'] = { read: new Set(), glob: undefined };
   const deps: SessionDeps = {
     cwd,
     config: {
       apiUrl: 'https://x/api',
       files: [{ pattern: 'locales/{locale}/{namespace}.json', format: 'json', jsonStyle: 'nested' }],
-      locales: {},
+      locales: { english: 'en' },
       ...config,
     },
     api: { get, post } as never,
@@ -90,6 +94,11 @@ export const harness = async (
     },
     read,
     stopping: () => stopping.value,
+    find: async (cfg, dir, context) => {
+      if (fail.glob !== undefined) throw fail.glob;
+
+      return findFiles(cfg, dir, context);
+    },
   };
   const session: WatchSession = new WatchSession({ debounceMs: 2000, ...opts }, deps, { defaultLocale: 'en', context: {} });
   const form = (call: number): FormData => post.mock.calls[call]![1] as FormData;
@@ -102,6 +111,7 @@ export const harness = async (
     post,
     read,
     stopping,
+    fail,
     put,
     remove,
     manifest: (call) => JSON.parse(form(call).get('manifest') as string),

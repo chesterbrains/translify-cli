@@ -24,7 +24,8 @@ export const watchVerdict = (error: unknown): WatchVerdict => {
   if (status === undefined) return 'retry';
   if (status === 401 || status === 403 || status === 426 || codeOf(error) === 'PROJECT_ARCHIVED') return 'stop';
   // Every 409 a plain push can get is transient: a transaction conflict, or a key archived or gone mid-push.
-  if (status === 409 || status === 429 || status >= 500) return 'retry';
+  // 408: a proxy gave up waiting, which says nothing about the files.
+  if (status === 408 || status === 409 || status === 429 || status >= 500) return 'retry';
 
   return 'wait';
 };

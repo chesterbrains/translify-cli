@@ -78,7 +78,9 @@ describe('WatchSession.scan', () => {
     await h.session.scan(T);
     await h.remove('en.lproj/Localizable.stringsdict');
 
-    expect(await h.session.scan(T + 500)).toEqual(['app']);
+    // One miss may be an editor or a checkout between delete and write: it takes two polls.
+    expect(await h.session.scan(T + 500)).toEqual([]);
+    expect(await h.session.scan(T + 1000)).toEqual(['app']);
     expect(h.session.files.map((match) => match.path)).toEqual(['en.lproj/Localizable.strings']);
   });
 
@@ -88,7 +90,9 @@ describe('WatchSession.scan', () => {
     await h.remove('locales/en/nav.json');
 
     expect(await h.session.scan(T + 500)).toEqual([]);
+    expect(h.out).toEqual([]);
     await h.session.scan(T + 1000);
+    await h.session.scan(T + 1500);
 
     expect([...h.session.dirty]).toEqual(['cart']);
     expect(h.out).toEqual(['12:04:31 nav: no source file left, nothing pushed']);
@@ -119,6 +123,81 @@ describe('WatchSession.scan', () => {
 
     expect(clash.err).toEqual(['12:04:31 locales/en/cart.json is matched by more than one files rule.']);
     expect([...clash.session.dirty]).toEqual([]);
+    expect(clash.session.problem).toBe('locales/en/cart.json is matched by more than one files rule.');
+  });
+
+  it('a clash that appears mid-watch skips the push, and prints again after it was fixed and came back', async () => {
+    const h = await harness(FILES);
+    await h.session.tick(T, true);
+    h.post.mockClear();
+    const clash = async (on: boolean, at: number): Promise<void> => {
+      // `english/` aliased to en makes two files claim en/cart.
+      if (on) await h.put('locales/english/cart.json', '{"a":"dup"}', at);
+      else await h.remove('locales/english/cart.json');
+    };
+    await h.put('locales/en/cart.json', '{"a":"new"}', T + 1000);
+    await h.session.tick(T + 1000);
+    await clash(true, T + 1500);
+
+    expect(await h.session.tick(T + 9000)).toBe('continue');
+    expect(h.post).not.toHaveBeenCalled();
+    expect(h.err).toHaveLength(1);
+    expect(h.err[0]).toContain('both map to locale en, namespace cart');
+
+    await clash(false, 0);
+    await h.session.tick(T + 9500);
+    expect(h.session.problem).toBeUndefined();
+    expect(h.post).toHaveBeenCalledTimes(1);
+
+    await clash(true, T + 10_000);
+    await h.session.tick(T + 10_500);
+    expect(h.err).toHaveLength(2);
+  });
+
+  it('an error from the file system during the glob is reported once and the watch goes on', async () => {
+    const h = await harness(FILES);
+    await h.session.scan(T);
+    h.fail.glob = Object.assign(new Error("EACCES: permission denied, scandir 'locales/en'"), { code: 'EACCES' });
+
+    expect(await h.session.tick(T + 500)).toBe('continue');
+    expect(await h.session.tick(T + 1000)).toBe('continue');
+    expect(h.err).toEqual(["12:04:31 Could not list the project files: EACCES: permission denied, scandir 'locales/en'"]);
+
+    h.fail.glob = undefined;
+    expect(await h.session.tick(T + 1500, true)).toBe('continue');
+    expect(h.post).toHaveBeenCalledTimes(2);
+  });
+
+  it('a source file that cannot be read is named once, and pushed when it can be', async () => {
+    const h = await harness(FILES);
+    h.fail.read.add('locales/en/nav.json');
+
+    await h.session.tick(T, true);
+    await h.session.tick(T + 500);
+    expect(h.err).toEqual(['12:04:31 locales/en/nav.json cannot be read (ENOENT); it is not pushed until it can be.']);
+    expect(h.post).toHaveBeenCalledTimes(1);
+
+    h.fail.read.clear();
+    await h.session.tick(T + 1000);
+    await h.session.tick(T + 3100);
+    expect(h.post).toHaveBeenCalledTimes(2);
+    expect(h.manifest(1)[0]!.namespace).toBe('nav');
+  });
+
+  it('a file deleted and written back with the same bytes pushes nothing and prints nothing', async () => {
+    const h = await harness(FILES);
+    await h.session.tick(T, true);
+    h.post.mockClear();
+    h.out.length = 0;
+    await h.remove('locales/en/nav.json');
+    await h.session.tick(T + 500);
+    await h.session.tick(T + 1000);
+    await h.put('locales/en/nav.json', '{"home":"Home"}', T + 1200);
+    await h.session.tick(T + 1500);
+    await h.session.tick(T + 9000);
+
+    expect(h.post).not.toHaveBeenCalled();
+    expect(h.out).toEqual(['12:04:31 nav: no source file left, nothing pushed']);
   });
 });
 
@@ -280,12 +359,101 @@ describe('WatchSession.tick', () => {
     h.post.mockRejectedValueOnce(refusal(409, 'TRANSACTION_CONFLICT', 'The server hit a transaction conflict. Try again.'));
 
     expect(await h.session.tick(T, true)).toBe('continue');
-    // The pass ends at the first retryable failure: nav waits for the retry too.
-    expect(h.post).toHaveBeenCalledTimes(1);
-    expect([...h.session.dirty].sort()).toEqual(['cart', 'nav']);
+    // A namespace that keeps failing never holds back the next one.
+    expect(h.post).toHaveBeenCalledTimes(2);
+    expect([...h.session.dirty]).toEqual(['cart']);
+    expect(h.out).toEqual(['12:04:31 pushed 1 namespace(s): 0 created, 0 updated, 1 unchanged']);
 
+    await h.session.tick(T + 1999);
+    expect(h.post).toHaveBeenCalledTimes(2);
     await h.session.tick(T + 2000);
     expect(h.post).toHaveBeenCalledTimes(3);
+    expect(h.manifest(2)[0]!.namespace).toBe('cart');
+  });
+
+  it('a namespace that fails every time does not starve the others, and its backoff still grows', async () => {
+    const h = await started();
+    h.post.mockImplementation(async (_path: string, form: FormData) => {
+      if ((form.get('manifest') as string).includes('"namespace":"cart"')) throw new CliError(EXIT.network, 'down');
+
+      return answer();
+    });
+    await h.put('locales/en/cart.json', '{"a":"1"}', T);
+    await h.put('locales/en/nav.json', '{"home":"1"}', T);
+    await h.session.tick(T + 1000);
+    await h.session.tick(T + 5000);
+    const pushes = (namespace: string): number =>
+      h.post.mock.calls.filter(([, form]) => ((form as FormData).get('manifest') as string).includes(`"namespace":"${namespace}"`)).length;
+    expect([pushes('cart'), pushes('nav')]).toEqual([1, 1]);
+
+    // cart is retried 2 s later, then 5 s after that: nav going through did not reset its backoff.
+    await h.session.tick(T + 7000);
+    expect(pushes('cart')).toBe(2);
+    await h.session.tick(T + 11_999);
+    expect(pushes('cart')).toBe(2);
+    await h.session.tick(T + 12_000);
+    expect(pushes('cart')).toBe(3);
+  });
+
+  it('the retry line stops repeating once the backoff has reached 30 s', async () => {
+    const h = await started();
+    h.post.mockRejectedValue(new CliError(EXIT.network, 'down'));
+    await h.put('locales/en/cart.json', '{"a":"1"}', T);
+    await h.session.tick(T + 1000);
+    let now: number = T + 5000;
+    for (const wait of [0, 2000, 5000, 15_000, 30_000, 30_000, 30_000]) {
+      now += wait;
+      await h.session.tick(now);
+    }
+
+    expect(h.post).toHaveBeenCalledTimes(7);
+    expect(h.err).toEqual([
+      '12:04:31 cart: down Retrying in 2 s.',
+      '12:04:31 cart: down Retrying in 5 s.',
+      '12:04:31 cart: down Retrying in 15 s.',
+      '12:04:31 cart: down Retrying every 30 s.',
+    ]);
+  });
+
+  it('a change during a push is pushed after it', async () => {
+    const h = await started();
+    await h.put('locales/en/cart.json', '{"a":"1"}', T);
+    h.post.mockImplementationOnce(async () => {
+      // Saved again while the request is on its way.
+      await h.put('locales/en/cart.json', '{"a":"2"}', T + 5001);
+
+      return answer();
+    });
+    await h.session.tick(T + 1000);
+    await h.session.tick(T + 5000);
+    expect(h.post).toHaveBeenCalledTimes(1);
+
+    await h.session.tick(T + 5500);
+    await h.session.tick(T + 7600);
+    expect(h.post).toHaveBeenCalledTimes(2);
+  });
+
+  it('an answer without locales prints unchanged instead of throwing', async () => {
+    const h = await harness(FILES);
+    h.post.mockResolvedValue({ dryRun: false });
+
+    expect(await h.session.tick(T, true)).toBe('continue');
+    expect(h.out).toEqual(['12:04:31 pushed 2 namespace(s): 0 created, 0 updated, 0 unchanged']);
+  });
+
+  it('nothing is sent once a stop was asked for, and a failure then promises no retry', async () => {
+    const h = await harness(FILES);
+    h.stopping.value = true;
+    expect(await h.session.tick(T, true)).toBe('continue');
+    expect(h.get).not.toHaveBeenCalled();
+
+    const late = await harness(FILES);
+    late.post.mockImplementationOnce(async () => {
+      late.stopping.value = true;
+      throw new CliError(EXIT.network, 'down');
+    });
+    await late.session.tick(T, true);
+    expect(late.err).toEqual(['12:04:31 cart: down']);
   });
 
   it('a 401 returns the auth exit code and starts no further request', async () => {

@@ -13,6 +13,7 @@ describe('watchVerdict', () => {
     ['429', http(429, 'RATE_LIMITED'), 'retry'],
     ['409 TRANSACTION_CONFLICT', http(409, 'TRANSACTION_CONFLICT'), 'retry'],
     ['409 without a code', http(409), 'retry'],
+    ['408 from a proxy', http(408), 'retry'],
     ['401 KEY_INVALID', http(401, 'KEY_INVALID'), 'stop'],
     ['403 SCOPE_MISSING', http(403, 'SCOPE_MISSING'), 'stop'],
     ['426 CLI_TOO_OLD', http(426, 'CLI_TOO_OLD'), 'stop'],
