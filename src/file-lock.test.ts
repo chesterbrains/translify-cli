@@ -231,6 +231,12 @@ describe('lockFolder', () => {
     expect((await stat(fallback)).mode & 0o777).toBe(0o700);
   });
 
+  it('a passing error from the temp folder is not a reason to lock somewhere else', async () => {
+    // A base that cannot exist: mkdir fails with ENOENT below a file... use a NUL byte, which every platform refuses outright.
+    await expect(lockFolder(join(dir, 'bad\0name'), null, join(dir, 'fallback'))).rejects.toBeDefined();
+    await expect(stat(join(dir, 'fallback'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it.skipIf(process.platform === 'win32')('closes a folder of its own that was left open to others', async () => {
     const folder = join(dir, `translify-${process.getuid?.()}`);
     await mkdir(folder);
@@ -254,6 +260,13 @@ describe('cacheLockFolder', () => {
 });
 
 describe('the lock CLI 0.13.4 used', () => {
+  // These write into the real temp folder, where 0.13.4 kept its lock: never leave one behind, pass or fail.
+  afterEach(async () => {
+    const legacy = await legacyLockPathFor(join(dir, 'en.json'));
+    await rm(legacy, { recursive: true, force: true });
+    await rm(`${legacy}.takeover`, { force: true });
+  });
+
   it('is held alongside the new one, so an older CLI waits; both are gone afterwards', async () => {
     const file = join(dir, 'en.json');
     const legacy = await legacyLockPathFor(file);
@@ -295,6 +308,17 @@ describe('the lock CLI 0.13.4 used', () => {
     } finally {
       await rm(legacy, { recursive: true, force: true });
     }
+  });
+
+  it('waiting for an older CLI does not let this run\'s own lock grow stale', async () => {
+    const file = join(dir, 'en.json');
+    const legacy = await legacyLockPathFor(file);
+    const lock = await lockPathFor(file);
+    await writeFile(legacy, 'older cli');
+    // The older CLI lets go after 150 ms, longer than the stale limit used here.
+    setTimeout(() => void rm(legacy, { force: true }), 150);
+    const age = await withFileLock(file, async () => Date.now() - (await stat(lock)).mtimeMs, { waitMs: 2000, staleMs: 100 });
+    expect(age).toBeLessThan(100);
   });
 
   it('losing it to an older CLI while stalled counts as losing the lock', async () => {

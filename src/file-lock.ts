@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { chmod, lstat, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, realpath, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
@@ -55,14 +55,21 @@ async function realOrNearest(path: string): Promise<string> {
 export async function lockFolder(
   base: string = tmpdir(),
   uid: number | null = process.getuid?.() ?? null,
-  fallback: string = cacheLockFolder(),
+  fallback?: string,
 ): Promise<string> {
   try {
     return await ownFolder(join(base, `translify-${uid ?? 'locks'}`), uid);
-  } catch {
-    return ownFolder(fallback, uid);
+  } catch (error) {
+    // Only an obstacle every process of this user meets alike. A passing error (too many open files, a full
+    // disk) must not send one process to another folder than its siblings, where it would lock nothing.
+    if (!(error instanceof NotOwnFolder) && !FOLDER_TAKEN.has(code(error) ?? '')) throw error;
+
+    return ownFolder(fallback ?? cacheLockFolder(), uid);
   }
 }
+
+class NotOwnFolder extends Error {}
+const FOLDER_TAKEN: ReadonlySet<string> = new Set(['EEXIST', 'ENOTDIR', 'EACCES', 'EPERM', 'EROFS']);
 
 /** `~/.cache/translify/locks` (XDG), `%LOCALAPPDATA%\\translify\\locks` on Windows. */
 export function cacheLockFolder(env: Record<string, string | undefined> = process.env, platform: string = process.platform): string {
@@ -77,7 +84,7 @@ export function cacheLockFolder(env: Record<string, string | undefined> = proces
 async function ownFolder(folder: string, uid: number | null): Promise<string> {
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const info = await lstat(folder);
-  if (!info.isDirectory() || (uid !== null && info.uid !== uid)) throw new Error(`${folder} is not a folder owned by this user`);
+  if (!info.isDirectory() || (uid !== null && info.uid !== uid)) throw new NotOwnFolder(`${folder} is not a folder owned by this user`);
   // Left open by an earlier umask or by hand: close it again.
   if (uid !== null && (info.mode & 0o077) !== 0) await chmod(folder, 0o700);
 
@@ -200,14 +207,20 @@ export async function withFileLock<T>(
     const older: 'held' | 'skipped' | 'busy' = await holdLegacy(legacy, token, deadline, options, platform);
     if (older === 'busy') return BUSY;
     legacyHeld = older === 'held';
+    // The wait above aged this run's own lock; without this a waiter could take it for abandoned.
+    if (legacyHeld) {
+      const now = new Date();
+      await utimes(lock, now, now).catch(() => undefined);
+    }
 
     return await fn(
       async () =>
         (await look(lock, platform))?.token === token && (!legacyHeld || (await look(legacy, platform).catch(() => undefined))?.token === token),
     );
   } finally {
+    // A release that fails must not turn a finished write into an error; the lock then goes stale on its own.
     if (legacyHeld) await removeIfToken(legacy, token, platform).catch(() => undefined);
-    await removeIfToken(lock, token, platform);
+    await removeIfToken(lock, token, platform).catch(() => undefined);
   }
 }
 
