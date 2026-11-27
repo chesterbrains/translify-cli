@@ -56,6 +56,8 @@ export interface PushResponse {
   pruned: number;
   /** Archived keys a source file named, restored from the trash in place. Absent on an older server. */
   keysRestored?: number;
+  /** Existing keys whose description or metadata the push changed; their cells may all be unchanged. Absent on an older server. */
+  keysUpdated?: number;
   /** Approved targets demoted to needs-review because this push changed their source. Absent on an older server. */
   staleReset?: number;
   /** Hex SHA-256 of the orphans; a confirmed prune sends it back. Absent on an older server. */

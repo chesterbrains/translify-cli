@@ -178,7 +178,9 @@ describe('WatchSession.scan', () => {
     expect(h.post).toHaveBeenCalledTimes(1);
 
     h.fail.read.clear();
+    h.out.length = 0;
     await h.session.tick(T + 1000);
+    expect(h.out).toEqual(['12:04:31 locales/en/nav.json can be read again.']);
     await h.session.tick(T + 3100);
     expect(h.post).toHaveBeenCalledTimes(2);
     expect(h.manifest(1)[0]!.namespace).toBe('nav');
@@ -289,6 +291,24 @@ describe('WatchSession.tick', () => {
     expect(h.post).toHaveBeenCalledTimes(1);
     expect(h.manifest(0).map((file) => file.path)).toEqual(['en.lproj/Localizable.strings', 'en.lproj/Localizable.stringsdict']);
     expect(h.flag(0, 'status')).toBe('DRAFT');
+  });
+
+  it('a Rails rule with a locale alias sends the disk locale as fileLocale, as a plain push does', async () => {
+    const h = await harness(
+      { 'config/locales/en-GB.yml': 'en-GB:\n  hello: Hello\n', 'config/locales/it.yml': 'it:\n  hello: Ciao\n' },
+      {},
+      {
+        files: [{ pattern: 'config/locales/{locale}.yml', format: 'yaml', yamlDialect: 'rails', namespace: 'app' }],
+        locales: { 'en-GB': 'en' },
+      },
+    );
+
+    expect(await h.session.tick(T, true)).toBe('continue');
+
+    expect(h.post).toHaveBeenCalledTimes(1);
+    expect(h.manifest(0)).toEqual([
+      { field: 'file0', path: 'config/locales/en-GB.yml', format: 'yaml', locale: 'en', namespace: 'app', dialect: 'rails', fileLocale: 'en-GB' },
+    ]);
   });
 
   it('a 422 prints, lets the other namespace go, and is not sent again until the file changes', async () => {
