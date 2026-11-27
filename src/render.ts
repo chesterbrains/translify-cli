@@ -4,7 +4,7 @@ import type { PushResponse, TranslationStatus } from './commands/push.js';
 import type { LintCell, LintIssue, LintResponse } from './commands/lint.js';
 import type { Config, FileRule } from './config.js';
 import { toFsLocale } from './patterns.js';
-import { safeText } from './safe-text.js';
+import { safeCount, safeText } from './safe-text.js';
 
 const MAX_ORPHANS: number = 20;
 const MAX_UNKNOWN: number = 5;
@@ -54,9 +54,9 @@ export function renderPush(res: PushResponse, view: { prune?: boolean } = {}): s
 
   for (const [locale, c] of Object.entries(res.locales).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     let line: string =
-      `  ${pc.bold(safeText(locale).padEnd(8))} ${pc.green(`${c.created} created`)}, ${pc.cyan(`${c.updated} updated`)}, ` +
-      pc.dim(`${c.unchanged} unchanged`);
-    if (c.skippedFilled > 0) line += pc.dim(`, ${c.skippedFilled} kept (already translated; --overwrite-targets replaces them)`);
+      `  ${pc.bold(safeText(locale).padEnd(8))} ${pc.green(`${safeCount(c.created)} created`)}, ${pc.cyan(`${safeCount(c.updated)} updated`)}, ` +
+      pc.dim(`${safeCount(c.unchanged)} unchanged`);
+    if (c.skippedFilled > 0) line += pc.dim(`, ${safeCount(c.skippedFilled)} kept (already translated; --overwrite-targets replaces them)`);
     const label: string | undefined = c.status === undefined ? undefined : STATUS_LABEL[c.status];
     if (label !== undefined && c.created + c.updated > 0) line += pc.magenta(` · ${label}`);
     lines.push(line);
@@ -72,14 +72,14 @@ export function renderPush(res: PushResponse, view: { prune?: boolean } = {}): s
   if (stale > 0) {
     lines.push(
       pc.yellow(
-        `${stale} approved translation(s) ${res.dryRun ? 'would go' : 'went'} back to review because their source text changed.`,
+        `${safeCount(stale)} approved translation(s) ${res.dryRun ? 'would go' : 'went'} back to review because their source text changed.`,
       ),
     );
   }
 
   const restored: number = res.keysRestored ?? 0;
   if (restored > 0) {
-    lines.push(pc.green(`${res.dryRun ? 'Would restore' : 'Restored'} ${restored} key(s) from the trash.`));
+    lines.push(pc.green(`${res.dryRun ? 'Would restore' : 'Restored'} ${safeCount(restored)} key(s) from the trash.`));
   }
 
   // A prune archives every orphan (it goes to the trash, purged 30 days later); `pruned` is what a dry
@@ -93,7 +93,7 @@ export function renderPush(res: PushResponse, view: { prune?: boolean } = {}): s
         ? `${listed.length} key(s) in Translify are not in your source files:`
         : res.dryRun
           ? `${listed.length} key(s) not in your source files would be moved to the trash:`
-          : `Moved ${res.pruned} key(s) that were not in your source files to the trash (restorable for 30 days${
+          : `Moved ${safeCount(res.pruned)} key(s) that were not in your source files to the trash (restorable for 30 days${
               meanwhile > 0 ? `; ${meanwhile} already archived meanwhile` : ''
             }):`;
     lines.push(pc.yellow(`  ${header}`));
@@ -102,11 +102,11 @@ export function renderPush(res: PushResponse, view: { prune?: boolean } = {}): s
     if (res.pruned === 0 && view.prune !== true) lines.push(pc.dim('  Use --prune to move them to the trash.'));
   }
   if (res.pruned > 0 && res.dryRun) {
-    lines.push(pc.yellow(`  Would move ${res.pruned} key(s) to the trash (restorable for 30 days).`));
+    lines.push(pc.yellow(`  Would move ${safeCount(res.pruned)} key(s) to the trash (restorable for 30 days).`));
   }
   // A real prune's orphan header already says it; repeat it only when there was no list.
   if (res.pruned > 0 && !res.dryRun && listed.length === 0) {
-    lines.push(pc.yellow(`  Moved ${res.pruned} key(s) to the Translify trash (restorable for 30 days).`));
+    lines.push(pc.yellow(`  Moved ${safeCount(res.pruned)} key(s) to the Translify trash (restorable for 30 days).`));
   }
 
   return lines.join('\n');
@@ -116,7 +116,8 @@ const MAX_VALUE: number = 80;
 /** Where the issue text starts: 4 indent + locale 8 + 1 + severity 8 + 1. */
 const VALUE_INDENT: string = ' '.repeat(22);
 
-const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`;
+/** `count` is a number from a server answer: printed through `safeCount` like every other one. */
+const plural = (count: number, word: string): string => `${safeCount(count)} ${word}${count === 1 ? '' : 's'}`;
 const braces = (arg: string | undefined): string => `{${arg ?? '?'}}`;
 
 /** One line of plain English per issue; a code this CLI does not know prints as-is. Arguments, messages and codes are the server's. */
@@ -268,7 +269,7 @@ export function renderKeyConflicts(res: LintResponse, config: Config): string[] 
   }
   if (res.keyConflictsTruncated === true) {
     // The server's count covers every namespace that was linted, also ones no nested rule here writes.
-    lines.push(pc.yellow(`The server listed only the first ${res.keyConflicts?.length ?? 0} of ${res.summary.keyConflicts ?? 0} such keys in the namespaces linted, so this list may be incomplete.`));
+    lines.push(pc.yellow(`The server listed only the first ${res.keyConflicts?.length ?? 0} of ${safeCount(res.summary.keyConflicts ?? 0)} such keys in the namespaces linted, so this list may be incomplete.`));
   }
   if (kinds.has('json')) {
     lines.push('A nested JSON file cannot hold both: `pull` writes one and drops the other. Set "jsonStyle": "flat" on the files rule, or rename one of the two keys.');
@@ -293,13 +294,13 @@ export function renderLint(res: LintResponse, config: Config, view: { severity?:
   if (res.truncated) {
     const matched: number = view.severity === 'error' ? errors : view.severity === 'warning' ? warnings : errors + warnings;
     lines.push(
-      pc.yellow(`Showing first ${res.cells.length} of ${matched} cells. Narrow with --namespace / --locale, or use --json.`),
+      pc.yellow(`Showing first ${res.cells.length} of ${safeCount(matched)} cells. Narrow with --namespace / --locale, or use --json.`),
     );
   }
 
   const perLocale: string = res.summary.locales
     .filter((row) => row.errors + row.warnings > 0)
-    .map((row) => `${safeText(toFsLocale(row.locale, config))} ${row.errors}/${row.warnings}`)
+    .map((row) => `${safeText(toFsLocale(row.locale, config))} ${safeCount(row.errors)}/${safeCount(row.warnings)}`)
     .join(' · ');
   const totals: string = `${plural(errors, 'error')}, ${plural(warnings, 'warning')}${perLocale === '' ? '' : ` — ${perLocale}`}`;
   if (conflicts.length > 0) {

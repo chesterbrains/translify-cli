@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { safeText } from './safe-text.js';
+import { safeCount, safeText } from './safe-text.js';
 
 describe('safeText', () => {
   it('leaves ordinary text alone, accents, emoji and quotes included', () => {
@@ -18,5 +18,14 @@ describe('safeText', () => {
     const every: string = Array.from({ length: 0xa0 }, (_, point) => String.fromCodePoint(point)).join('') + '\u2028\u2029';
     // eslint-disable-next-line no-control-regex -- the point of the test
     expect(safeText(every)).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
+  });
+});
+
+describe('safeCount', () => {
+  it('prints a number as it is, and text sent in its place with control characters shown', () => {
+    expect(safeCount(12)).toBe('12');
+    expect(safeCount(0)).toBe('0');
+    expect(safeCount('3\x1b[2J')).toBe('3\\x1b[2J');
+    expect(safeCount(undefined)).toBe('undefined');
   });
 });

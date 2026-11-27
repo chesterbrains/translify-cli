@@ -1,4 +1,4 @@
-import { safeText } from '../safe-text.js';
+import { safeCount, safeText } from '../safe-text.js';
 import type { Config } from '../config.js';
 import type { Api } from '../http.js';
 import type { IssueCell } from '../render.js';
@@ -63,15 +63,15 @@ export async function runPublish(environment: string, deps: PublishDeps): Promis
   const errorCount: number = res.errorCount ?? 0;
   // An ungated environment reports 0 / 0; keep its output as it was before review state.
   const gate: string =
-    carriedOverCount > 0 || withheldCount > 0 ? ` ${carriedOverCount} carried over, ${withheldCount} withheld.` : '';
-  const errors: string = errorCount > 0 ? ` ${errorCount} with placeholder errors.` : '';
+    carriedOverCount > 0 || withheldCount > 0 ? ` ${safeCount(carriedOverCount)} carried over, ${safeCount(withheldCount)} withheld.` : '';
+  const errors: string = errorCount > 0 ? ` ${safeCount(errorCount)} with placeholder errors.` : '';
   deps.out(
     deps.json === true
       ? JSON.stringify({
           response: res,
           summary: { environment, publishedCount: res.publishedCount, carriedOverCount, withheldCount, errorCount },
         })
-      : `Published ${res.publishedCount} translation(s) to ${environment}.${gate}${errors}`,
+      : `Published ${safeCount(res.publishedCount)} translation(s) to ${environment}.${gate}${errors}`,
   );
 
   return deps.failOnWithheld === true && withheldCount > 0 ? EXIT.withheld : EXIT.ok;
