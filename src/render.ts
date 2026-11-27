@@ -116,7 +116,8 @@ const MAX_VALUE: number = 80;
 /** Where the issue text starts: 4 indent + locale 8 + 1 + severity 8 + 1. */
 const VALUE_INDENT: string = ' '.repeat(22);
 
-const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`;
+/** `count` is a number from a server answer: printed through `safeCount` like every other one. */
+const plural = (count: number, word: string): string => `${safeCount(count)} ${word}${count === 1 ? '' : 's'}`;
 const braces = (arg: string | undefined): string => `{${arg ?? '?'}}`;
 
 /** One line of plain English per issue; a code this CLI does not know prints as-is. Arguments, messages and codes are the server's. */
@@ -299,7 +300,7 @@ export function renderLint(res: LintResponse, config: Config, view: { severity?:
 
   const perLocale: string = res.summary.locales
     .filter((row) => row.errors + row.warnings > 0)
-    .map((row) => `${safeText(toFsLocale(row.locale, config))} ${row.errors}/${row.warnings}`)
+    .map((row) => `${safeText(toFsLocale(row.locale, config))} ${safeCount(row.errors)}/${safeCount(row.warnings)}`)
     .join(' · ');
   const totals: string = `${plural(errors, 'error')}, ${plural(warnings, 'warning')}${perLocale === '' ? '' : ` — ${perLocale}`}`;
   if (conflicts.length > 0) {

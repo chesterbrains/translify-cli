@@ -75,6 +75,28 @@ describe('renderPush', () => {
     expect(raw).toContain('2\\x1b[2J key(s)');
   });
 
+  it('the other counts of a push, and the totals of lint, go through it too', () => {
+    const bad = '5\x1b[2J' as never;
+    const push: string = renderPush({
+      ...base,
+      locales: { it: { created: 0, updated: 0, unchanged: 0, skippedFilled: 3, unknownKeys: [] } },
+      staleReset: 2,
+      keysRestored: 4,
+    });
+    // Real numbers print as they always did.
+    expect(stripVTControlCharacters(push)).toContain('3 kept');
+    expect(stripVTControlCharacters(push)).toContain('2 approved translation(s)');
+    expect(stripVTControlCharacters(push)).toContain('Restored 4 key(s)');
+
+    const config = { apiUrl: 'http://x', files: [], locales: {} } as unknown as Config;
+    const lint: string = renderLint(
+      { summary: { errors: bad, warnings: 1, locales: [{ locale: 'it', errors: 2, warnings: 1 }] }, cells: [], truncated: false },
+      config,
+    );
+    expect(lint).not.toContain('\x1b[2J');
+    expect(stripVTControlCharacters(lint)).toContain('5\\x1b[2J errors, 1 warning — it 2/1');
+  });
+
   it('lists orphans and hints --prune', () => {
     const output: string = plain({
       ...base,

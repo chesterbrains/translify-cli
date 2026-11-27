@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { safeText } from '../safe-text.js';
+import { safeCount, safeText } from '../safe-text.js';
 import type { Config } from '../config.js';
 import type { ExitCode } from '../errors.js';
 import type { Api } from '../http.js';
@@ -140,8 +140,9 @@ const describeDamage = async (preview: PushResponse, opts: PushOptions, api: Api
       .map(([locale, counts]) => [locale, counts.updated]);
     const total: number = overwritten.reduce((sum, [, count]) => sum + count, 0);
     if (total > 0) {
-      const byLocale: string = overwritten.map(([locale, count]) => `${locale}: ${count}`).join(', ');
-      damage.push(`overwrite ${total} existing translation(s) (${byLocale})`);
+      // Locale codes and counts of the dry run's answer, shown in a question the user answers.
+      const byLocale: string = overwritten.map(([locale, count]) => `${safeText(locale)}: ${safeCount(count)}`).join(', ');
+      damage.push(`overwrite ${safeCount(total)} existing translation(s) (${byLocale})`);
     }
   }
 
