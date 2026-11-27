@@ -101,6 +101,24 @@ describe('runLint', () => {
     expect(out).toContain('0 errors, 2 warnings');
   });
 
+  it('key conflicts are listed but never change the exit code, --max-warnings 0 included', async () => {
+    const conflicted: LintResponse = {
+      ...CLEAN,
+      summary: { ...CLEAN.summary, keyConflicts: 1 },
+      keyConflicts: [{ namespace: 'shop', key: 'cart', below: ['cart.title'], belowCount: 1 }],
+      keyConflictsTruncated: false,
+    };
+    const { code, out } = await run(conflicted, { maxWarnings: '0' });
+    expect(code).toBe(EXIT.ok);
+    expect(out).toContain('  cart  above  cart.title');
+    expect(out).toContain('✔ No issues in 1 locale(s).');
+
+    const json = await run(conflicted, { json: true, maxWarnings: '0' });
+    expect(json.code).toBe(EXIT.ok);
+    expect(JSON.parse(json.out).summary).toEqual({ errors: 0, warnings: 0, truncated: false, keyConflicts: 1 });
+    expect(JSON.parse(json.out).response.keyConflicts).toEqual(conflicted.keyConflicts);
+  });
+
   it('refuses a bad --max-warnings before any request', async () => {
     const get = vi.fn();
     await expect(
