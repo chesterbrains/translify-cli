@@ -64,7 +64,10 @@ const exitFor = (status: number, code: string | undefined): ExitCode => {
   return EXIT.failed;
 };
 
-const list = (value: unknown): string => (Array.isArray(value) ? value.map(String).join(', ') : String(value));
+/** A value from the server's answer, as text that is safe to print (see `safeText`). */
+const shown = (value: unknown): string => safeText(String(value));
+
+const list = (value: unknown): string => (Array.isArray(value) ? value.map(shown).join(', ') : shown(value));
 
 const validationLines = (errors: unknown): string => {
   if (!Array.isArray(errors) || errors.length === 0) return '';
@@ -74,7 +77,8 @@ const validationLines = (errors: unknown): string => {
       const e: Record<string, unknown> = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
       const where: string = `${String(e.file ?? '?')}${e.line === undefined ? '' : `:${String(e.line)}`}`;
 
-      return `${where}${e.key === undefined ? '' : ` ${String(e.key)}`}: ${String(e.reason ?? 'invalid')}`;
+      // One row per line: a file name, key or reason holding a line break must not start a row of its own.
+      return safeText(`${where}${e.key === undefined ? '' : ` ${String(e.key)}`}: ${String(e.reason ?? 'invalid')}`);
     })
     .join('\n');
 };
@@ -91,13 +95,13 @@ const describeBody = (status: number, body: ErrorBody): string => {
     case 'KEY_WRONG_KIND':
       return 'This is not a secret key. The CLI needs an sk_ key.';
     case 'SCOPE_MISSING':
-      return `This key lacks the ${String(body.required)} scope. Create a key that has it.`;
+      return `This key lacks the ${shown(body.required)} scope. Create a key that has it.`;
     case 'QUOTA_EXCEEDED':
-      return `Plan limit reached for ${String(body.dimension)}: ${String(body.current)} of ${String(body.limit)} used.`;
+      return `Plan limit reached for ${shown(body.dimension)}: ${shown(body.current)} of ${shown(body.limit)} used.`;
     case 'PUSH_TOO_LARGE':
-      return `Push too large (${String(body.entries ?? body.bytes)} over the limit of ${String(body.limit)}). Split it with --namespace.`;
+      return `Push too large (${shown(body.entries ?? body.bytes)} over the limit of ${shown(body.limit)}). Split it with --namespace.`;
     case 'CLI_TOO_OLD':
-      return `This CLI is too old; ${String(body.minimum)} or newer is required. Upgrade: ${UPGRADE}`;
+      return `This CLI is too old; ${shown(body.minimum)} or newer is required. Upgrade: ${UPGRADE}`;
     case 'VALIDATION_FAILED': {
       const lines: string = validationLines(body.errors);
 
@@ -114,15 +118,15 @@ const describeBody = (status: number, body: ErrorBody): string => {
     case 'APPROVED_ONLY_REQUIRES_WORKING':
       return ONLY_APPROVED_NEEDS_WORKING;
     case 'INVALID_CELLS':
-      return `Publish refused: ${String(body.total)} translation(s) with placeholder errors would go live. Nothing was published.`;
+      return `Publish refused: ${shown(body.total)} translation(s) with placeholder errors would go live. Nothing was published.`;
     case 'ANDROID_UNSUPPORTED':
-      return `Pull refused: ${String(body.total)} translation(s) cannot be written as Android strings.xml. Nothing was written.`;
+      return `Pull refused: ${shown(body.total)} translation(s) cannot be written as Android strings.xml. Nothing was written.`;
     case 'YAML_UNSUPPORTED':
-      return `Pull refused: ${String(body.total)} translation(s) cannot be written as YAML. Nothing was written.`;
+      return `Pull refused: ${shown(body.total)} translation(s) cannot be written as YAML. Nothing was written.`;
     case 'STRINGS_UNSUPPORTED':
-      return `Pull refused: ${String(body.total)} translation(s) cannot be written as iOS .strings/.stringsdict. Nothing was written.`;
+      return `Pull refused: ${shown(body.total)} translation(s) cannot be written as iOS .strings/.stringsdict. Nothing was written.`;
     case 'XLIFF_DIALECT_UNSUPPORTED':
-      return `Pull refused: ${String(body.total)} translation(s) cannot be written as Angular XLIFF. Nothing was written.`;
+      return `Pull refused: ${shown(body.total)} translation(s) cannot be written as Angular XLIFF. Nothing was written.`;
     case 'TRANSACTION_CONFLICT':
       return 'The server hit a transaction conflict. Try again.';
     case 'RATE_LIMITED':

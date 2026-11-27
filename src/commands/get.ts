@@ -1,3 +1,4 @@
+import { safeText } from '../safe-text.js';
 import type { Config } from '../config.js';
 import { CliError, EXIT, type ExitCode } from '../errors.js';
 import { isMissingRoute, type Api } from '../http.js';
@@ -39,16 +40,16 @@ const keyMessage = (key: string, body: { code?: unknown; archived?: unknown; nam
     case 'KEY_NOT_FOUND':
       return `Key '${key}' not found.${body.archived === true ? ' It is in the trash; restore it in Translify or set its source text.' : ''}`;
     case 'NAMESPACE_AMBIGUOUS':
-      return `Key '${key}' exists in namespaces ${Array.isArray(body.namespaces) ? body.namespaces.map(String).join(', ') : String(body.namespaces)}. Re-run with --namespace <ns>.`;
+      return `Key '${key}' exists in namespaces ${Array.isArray(body.namespaces) ? body.namespaces.map((ns) => safeText(String(ns))).join(', ') : safeText(String(body.namespaces))}. Re-run with --namespace <ns>.`;
     case 'NAMESPACE_REQUIRED':
       return `'${key}' is a new key: say where it lives with --namespace <ns>.${
         Array.isArray(body.archivedNamespaces) && body.archivedNamespaces.length > 0
-          ? ` It is in the trash in namespace ${body.archivedNamespaces.map(String).join(', ')}: pass --namespace <ns> to restore it.`
+          ? ` It is in the trash in namespace ${body.archivedNamespaces.map((ns) => safeText(String(ns))).join(', ')}: pass --namespace <ns> to restore it.`
           : ''
       }`;
     case 'SOURCE_REQUIRED':
       return typeof body.defaultLocale === 'string'
-        ? `Key '${key}' does not exist. Set its source text (${body.defaultLocale}) first.`
+        ? `Key '${key}' does not exist. Set its source text (${safeText(body.defaultLocale)}) first.`
         : `Key '${key}' does not exist. This project has no default locale; set one in Translify first.`;
     case 'KEY_ARCHIVED':
       return `Key '${key}' is in the trash. Restore it in Translify, or set its source text to bring it back.`;
@@ -65,16 +66,16 @@ export function explainKeyError(error: unknown, key: string): unknown {
   return message === undefined ? error : new CliError(error.exitCode, message, error.details);
 }
 
-const oneLine = (value: string): string => value.replace(/[\r\n\t]/g, (c) => (c === '\n' ? '\\n' : c === '\r' ? '\\r' : '\\t'));
-
 const table = (res: GetKeyResponse): string => {
   const rows: string[][] = [
     ['LOCALE', 'STATUS', 'ISSUES', 'VALUE'],
     ...res.cells.map((cell) => [
-      cell.locale,
-      cell.status ?? '-',
-      cell.issueSeverity === null ? '' : cell.issueSeverity.toLowerCase(),
-      cell.value === null ? '(empty)' : oneLine(cell.value),
+      safeText(cell.locale),
+      safeText(cell.status ?? '-'),
+      cell.issueSeverity === null ? '' : safeText(cell.issueSeverity.toLowerCase()),
+      // One row per cell: line breaks, tabs and every other control character show as escapes. The raw value is
+      // what `translify get <key> <locale>` prints.
+      cell.value === null ? '(empty)' : safeText(cell.value),
     ]),
   ];
   const widths: number[] = [0, 1, 2].map((i) => Math.max(...rows.map((row) => row[i]!.length)));
@@ -85,7 +86,7 @@ const table = (res: GetKeyResponse): string => {
       .trimEnd(),
   );
 
-  return ['Namespace: ' + res.namespace, 'Key:       ' + res.key, '', ...lines].join('\n');
+  return ['Namespace: ' + safeText(res.namespace), 'Key:       ' + safeText(res.key), '', ...lines].join('\n');
 };
 
 export async function runGet(key: string, locale: string | undefined, opts: GetOptions, deps: GetDeps): Promise<ExitCode> {

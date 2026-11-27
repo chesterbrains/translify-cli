@@ -160,6 +160,16 @@ describe('runPull', () => {
     expect(await readFile(join(cwd, 'locales/en_US/cart.json'), 'utf8')).toBe('{}\n');
   });
 
+  it('a path built from a server name with a control character is listed escaped', async () => {
+    const cwd = await tmp();
+    const client = { get: vi.fn(async () => ({ files: [{ locale: 'it', namespace: 'ca\x07rt', format: 'json', content: '{}\n' }], warnings: [] })) };
+    const printed: string[] = [];
+    await runPull({}, { cwd, config: { ...config, files: [config.files[0]!] }, api: client as never, out: (line) => printed.push(line) });
+
+    expect(printed.join('\n')).toContain('  locales/it/ca\\x07rt.json (new)');
+    expect(printed.join('\n')).not.toContain('\x07');
+  });
+
   it('refuses a path that escapes the repo', async () => {
     const cwd = await tmp();
     const client = { get: vi.fn(async () => ({ files: [{ locale: 'it', namespace: '../../../evil', format: 'json', content: '{}\n' }], warnings: [] })) };

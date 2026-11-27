@@ -346,8 +346,9 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
     if (drift.length === 0) deps.out(opts.check ? 'Up to date.' : 'Nothing to update.');
     else {
       const rows: string[] = [
-        ...changed.map((path) => `  ${path}`),
-        ...created.map((path) => `  ${path} (new)`),
+        // Paths are built from the server's locale and namespace names.
+        ...changed.map((path) => `  ${safeText(path)}`),
+        ...created.map((path) => `  ${safeText(path)} (new)`),
       ];
       deps.out(`${opts.check ? 'Out of date' : 'Updated'}:\n${rows.join('\n')}`);
     }

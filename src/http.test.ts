@@ -196,3 +196,22 @@ describe('isMissingRoute', () => {
     expect(isMissingRoute(new Error('x'))).toBe(false);
   });
 });
+
+describe('server text in error messages', () => {
+  it('a file name, key or reason with control characters cannot recolour the output or start a row of its own', async () => {
+    const error = await fail(422, {
+      code: 'VALIDATION_FAILED',
+      errors: [{ file: 'a\x1b[31m.json', line: 2, key: 'k\nfake.json:1 x', reason: 'bad\x1b[31m' }],
+    });
+    expect(error.message).toBe(
+      'The push was rejected; nothing was written.\na\\x1b[31m.json:2 k\\nfake.json:1 x: bad\\x1b[31m',
+    );
+    expect(error.message.split('\n')).toHaveLength(2);
+  });
+
+  it('names the server lists in a refusal are escaped too', async () => {
+    expect((await fail(422, { code: 'LOCALE_NOT_FOUND', locales: ['x\x1b[31mx', 'yy'] })).message).toContain('x\\x1b[31mx, yy');
+    expect((await fail(422, { code: 'NAMESPACE_NOT_FOUND', namespaces: ['no\x1b[31mpe'] })).message).toContain('no\\x1b[31mpe');
+    expect((await fail(403, { code: 'SCOPE_MISSING', required: 'PU\x1b[31mSH' })).message).toContain('PU\\x1b[31mSH');
+  });
+});

@@ -604,7 +604,7 @@ Options:
 - `set`: `--namespace <ns>`, `--status <draft|needs-review|approved>`, `--no-write` (leave local files alone), `--json`
 - `--namespace <ns>` (one namespace; repeat the command for several)
 - `--json` on `push`, `pull`, `status`, `publish`, `lint`, `get` and `set`: machine-readable output on stdout
-- Names and messages that come from Translify (keys, namespaces, locales, warnings, error messages) are printed with control characters shown as escapes (`\x1b`, `\n`), so nothing stored in a project can recolour or rewrite your terminal output. `--json` output and a value printed by `translify get <key> <locale>` are left exactly as stored.
+- Names, messages and values that come from Translify (keys, namespaces, locales, warnings, error messages, the `get` table, the files `pull` lists) are printed with control characters shown as escapes (`\x1b`, `\n`), so nothing stored in a project can recolour or rewrite your terminal output. `--json` output and a value printed by `translify get <key> <locale>` are left exactly as stored.
 - `--debug` (global): print error details and stack traces
 
 ## Single keys
