@@ -77,18 +77,18 @@ export interface PushDeps {
   err: (line: string) => void;
 }
 
-interface Upload {
+export interface Upload {
   match: Match;
   field: string;
   /** Copied into a plain ArrayBuffer: `File` does not accept a pooled Buffer's type. */
   bytes: Uint8Array<ArrayBuffer>;
 }
 
-const PUSH: string = '/cli/v1/push';
+export const PUSH_PATH: string = '/cli/v1/push';
 const MAX_FILES: number = 500;
 
 /** One form field per file (`file0`, `file1`, …): the server matches by field, never by filename. */
-const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, prune: boolean, pruneDigest?: string): FormData => {
+export const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, prune: boolean, pruneDigest?: string): FormData => {
   const form: FormData = new FormData();
   form.set(
     'manifest',
@@ -120,6 +120,16 @@ const buildForm = (uploads: Upload[], opts: PushOptions, dryRun: boolean, prune:
 
   return form;
 };
+
+/** The matched files' bytes, each under the form field the manifest names. */
+export const readUploads = async (matches: Match[], cwd: string): Promise<Upload[]> =>
+  Promise.all(
+    matches.map(async (match, index) => ({
+      match,
+      field: `file${index}`,
+      bytes: new Uint8Array(await readFile(join(cwd, match.path))),
+    })),
+  );
 
 /**
  * What a confirmed push would destroy, from its dry run. `updated` also counts
@@ -164,13 +174,7 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
     throw new CliError(EXIT.failed, `Too many files (${matches.length} > ${MAX_FILES}): split the push with --namespace.`);
   }
 
-  const uploads: Upload[] = await Promise.all(
-    matches.map(async (match, index) => ({
-      match,
-      field: `file${index}`,
-      bytes: new Uint8Array(await readFile(join(deps.cwd, match.path))),
-    })),
-  );
+  const uploads: Upload[] = await readUploads(matches, deps.cwd);
   const show = (res: PushResponse, preview?: PushResponse): void => {
     if (opts.json !== true) for (const warning of res.warnings ?? []) deps.out(`warning: ${safeText(warning)}`);
     deps.out(
@@ -183,12 +187,12 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
   const destructive: boolean = opts.prune === true || opts.overwriteTargets === true;
   if (opts.dryRun === true || !destructive) {
     // Plain push or an explicit dry run: one request, nothing to confirm.
-    show(await deps.api.post<PushResponse>(PUSH, buildForm(uploads, opts, opts.dryRun === true, opts.prune === true)));
+    show(await deps.api.post<PushResponse>(PUSH_PATH, buildForm(uploads, opts, opts.dryRun === true, opts.prune === true)));
 
     return EXIT.ok;
   }
 
-  const preview: PushResponse = await deps.api.post<PushResponse>(PUSH, buildForm(uploads, opts, true, opts.prune === true));
+  const preview: PushResponse = await deps.api.post<PushResponse>(PUSH_PATH, buildForm(uploads, opts, true, opts.prune === true));
   if (opts.prune === true && typeof preview.pruneDigest !== 'string') {
     deps.err(
       'This server cannot confirm a prune (its dry run returned no pruneDigest), so --prune would archive without a bound. ' +
@@ -222,7 +226,7 @@ export async function runPush(opts: PushOptions, deps: PushDeps): Promise<ExitCo
   // set differs it answers 409 ORPHANS_CHANGED and writes nothing. With none, there is nothing to prune.
   const prune: boolean = opts.prune === true && preview.orphans.length > 0;
   const res: PushResponse = await deps.api.post<PushResponse>(
-    PUSH,
+    PUSH_PATH,
     buildForm(uploads, opts, false, prune, prune ? preview.pruneDigest : undefined),
   );
   show(res, preview);
