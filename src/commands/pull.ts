@@ -110,10 +110,10 @@ const dialectRefusal = (body: DialectBody, config: Config, dialect: string = 'an
             : 'Symfony YAML'
           : `XLIFF for ${dialect}`;
   const lines: string[] = [
-    `Pull refused: ${body.total} translation(s) cannot be written as ${target}. Nothing was written.`,
+    `Pull refused: ${safeText(String(body.total))} translation(s) cannot be written as ${target}. Nothing was written.`,
     ...renderReasonCells(cells, config),
   ];
-  if (body.total > cells.length) lines.push(`Showing first ${cells.length} of ${body.total}.`);
+  if (body.total > cells.length) lines.push(`Showing first ${cells.length} of ${safeText(String(body.total))}.`);
   lines.push(...(body.code === 'YAML_UNSUPPORTED' ? yamlHints(cells) : [dialectHint(body.code)]));
 
   return new CliError(EXIT.issues, lines.join('\n'), body);
@@ -306,7 +306,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
         const path: string = pathFor(rule, file.locale, file.namespace, deps.config, context);
         const absolute: string | undefined = insideFolder(deps.cwd, path);
         if (absolute === undefined) {
-          throw new CliError(EXIT.failed, `Refusing to write ${path}: it resolves outside the project directory.`);
+          throw new CliError(EXIT.failed, `Refusing to write ${safeText(path)}: it resolves outside the project directory.`);
         }
 
         // Two server locales can back-map to one disk locale; writing both would clobber one every run.
@@ -315,7 +315,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
         if (other !== undefined) {
           throw new CliError(
             EXIT.failed,
-            `${path} would be written for both ${other} and ${cell}. Fix the "locales" map so each Translify locale has its own file.`,
+            `${safeText(path)} would be written for both ${safeText(other)} and ${safeText(cell)}. Fix the "locales" map so each Translify locale has its own file.`,
           );
         }
         seen.set(absolute, cell);

@@ -53,7 +53,14 @@ describe('renderPush', () => {
 
     expect(output).toContain('    ca\\x1b[31mrt:leg\\nacy');
     expect(output).toContain('e\\x1b[31mn');
-    expect(output).not.toContain('\x1b[31m');
+    // Unstripped: whatever colour codes this CLI adds itself, the server's sequence must not be among them.
+    const raw: string = renderPush({
+      ...base,
+      locales: { 'e\x1b[31mn': { created: 1, updated: 0, unchanged: 0, skippedFilled: 0, unknownKeys: ['ca\x1b[31mrt:x'] } },
+      orphans: [{ namespace: 'ca\x1b[31mrt', key: 'legacy' }],
+    });
+    expect(raw).not.toContain('\x1b[31m');
+    expect(raw).toContain('ca\\x1b[31mrt:x');
   });
 
   it('lists orphans and hints --prune', () => {

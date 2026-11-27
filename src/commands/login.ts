@@ -1,3 +1,4 @@
+import { safeText } from '../safe-text.js';
 import type { ExitCode } from '../errors.js';
 import { assertSecret, saveKey } from '../credentials.js';
 import { EXIT } from '../errors.js';
@@ -33,7 +34,7 @@ export async function runLogin(deps: LoginDeps): Promise<ExitCode> {
   // A 401/403 throws here, so a rejected key is never saved.
   const me: LoginWhoami = await api.get<LoginWhoami>('/cli/v1/whoami');
   const path: string = await saveKey(key, deps.env);
-  deps.out(`Logged in to ${me.project.name} (${me.project.slug}) with scopes ${me.key.scopes.join(', ')}. Saved to ${path}.`);
+  deps.out(`Logged in to ${safeText(me.project.name)} (${safeText(me.project.slug)}) with scopes ${safeText(me.key.scopes.join(', '))}. Saved to ${path}.`);
 
   return EXIT.ok;
 }

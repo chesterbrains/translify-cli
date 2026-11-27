@@ -1,3 +1,4 @@
+import { safeText } from '../safe-text.js';
 import type { Config } from '../config.js';
 import type { Api } from '../http.js';
 import type { IssueCell } from '../render.js';
@@ -41,10 +42,10 @@ const isInvalidCells = (details: unknown): details is InvalidCellsBody =>
 const refusal = (body: InvalidCellsBody, config: Config | undefined): CliError => {
   const cells: IssueCell[] = Array.isArray(body.cells) ? body.cells : [];
   const lines: string[] = [
-    `Publish refused: ${body.total} translation(s) with placeholder errors would go live. Nothing was published.`,
+    `Publish refused: ${safeText(String(body.total))} translation(s) with placeholder errors would go live. Nothing was published.`,
     ...renderIssueCells(cells, config),
   ];
-  if (body.total > cells.length) lines.push(`Showing first ${cells.length} of ${body.total}.`);
+  if (body.total > cells.length) lines.push(`Showing first ${cells.length} of ${safeText(String(body.total))}.`);
   lines.push('Fix them (translify lint lists every issue) or re-run with --allow-errors.');
 
   return new CliError(EXIT.issues, lines.join('\n'), body);

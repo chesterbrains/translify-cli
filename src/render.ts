@@ -63,7 +63,7 @@ export function renderPush(res: PushResponse, view: { prune?: boolean } = {}): s
     if (c.unknownKeys.length > 0) {
       const more: string = c.unknownKeys.length > MAX_UNKNOWN ? ', …' : '';
       lines.push(
-        pc.yellow(`           ${c.unknownKeys.length} unknown key(s) skipped: ${c.unknownKeys.slice(0, MAX_UNKNOWN).join(', ')}${more}`),
+        pc.yellow(`           ${c.unknownKeys.length} unknown key(s) skipped: ${safeText(c.unknownKeys.slice(0, MAX_UNKNOWN).join(', '))}${more}`),
       );
     }
   }

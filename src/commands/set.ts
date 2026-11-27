@@ -340,7 +340,8 @@ export async function runSet(key: string, locale: string, value: string, opts: S
     const detail: string = issue.arg !== undefined ? ` ${issue.arg}` : issue.categories !== undefined && issue.categories.length > 0 ? ` ${issue.categories.join(', ')}` : '';
     deps.out(safeText(`warning: placeholder ${issue.severity.toLowerCase()}: ${issue.code}${detail}`));
   }
-  if (local.line !== undefined) deps.out(local.line);
+  // The line may name the server's locale, namespace, or a path built from them.
+  if (local.line !== undefined) deps.out(safeText(local.line));
 
   return EXIT.ok;
 }

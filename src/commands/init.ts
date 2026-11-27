@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { safeText } from '../safe-text.js';
 import { writeFileAtomic } from '../file-write.js';
 import type { Config, FileRule } from '../config.js';
 import type { ExitCode } from '../errors.js';
@@ -99,7 +100,9 @@ export async function runInit(deps: InitDeps): Promise<ExitCode> {
   // A typed key that is rejected throws here (exit 2): nothing is written and nothing is saved.
   const me: WhoamiInfo | undefined = await identify(deps, apiUrl);
   if (me !== undefined) {
-    deps.out(`Project: ${me.project.name}, default locale ${me.project.defaultLocale ?? 'none'}; locales: ${me.locales.join(', ')}`);
+    deps.out(
+      `Project: ${safeText(me.project.name)}, default locale ${safeText(me.project.defaultLocale ?? 'none')}; locales: ${safeText(me.locales.join(', '))}`,
+    );
   }
 
   const detection: Detection = await detectLayout(deps.cwd);
@@ -185,7 +188,7 @@ async function identify(deps: InitDeps, apiUrl: string): Promise<WhoamiInfo | un
   assertSecret(typed);
   const me: WhoamiInfo = await deps.fetchWhoami(apiUrl, typed);
   const path: string = await deps.saveKey(typed);
-  deps.out(`Logged in to ${me.project.name} (${me.project.slug}) with scopes ${me.key.scopes.join(', ')}. Saved to ${path}.`);
+  deps.out(`Logged in to ${safeText(me.project.name)} (${safeText(me.project.slug)}) with scopes ${safeText(me.key.scopes.join(', '))}. Saved to ${path}.`);
 
   return me;
 }

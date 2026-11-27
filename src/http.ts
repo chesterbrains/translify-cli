@@ -135,7 +135,7 @@ const describeBody = (status: number, body: ErrorBody): string => {
       if (status >= 500) return `Translify server error (${status}). Try again shortly.`;
       if (status === 429) return 'Rate limited by the server; gave up after retries. Try again shortly.';
 
-      return text || `HTTP ${status}${body.code === undefined ? '' : ` ${body.code}`}`;
+      return text || `HTTP ${status}${body.code === undefined ? '' : ` ${shown(body.code)}`}`;
   }
 };
 
