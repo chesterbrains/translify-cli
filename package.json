@@ -28,7 +28,7 @@
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:parallel": "node scripts/parallel-set.mjs",
-    "test:watch": "node scripts/watch-smoke.mjs",
+    "test:watch-smoke": "node scripts/watch-smoke.mjs",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
