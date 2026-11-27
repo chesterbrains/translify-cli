@@ -44,6 +44,25 @@ describe('renderPush', () => {
     expect(plain(base)).toMatch(/2 unknown key\(s\).*cart:old, cart:gone/);
   });
 
+  it('orphan names and locale codes from the server are printed with control characters escaped', () => {
+    const output: string = plain({
+      ...base,
+      locales: { 'e\x1b[31mn': { created: 1, updated: 0, unchanged: 0, skipped: 0, unknownKeys: [] } } as never,
+      orphans: [{ namespace: 'ca\x1b[31mrt', key: 'leg\nacy' }],
+    });
+
+    expect(output).toContain('    ca\\x1b[31mrt:leg\\nacy');
+    expect(output).toContain('e\\x1b[31mn');
+    // Unstripped: whatever colour codes this CLI adds itself, the server's sequence must not be among them.
+    const raw: string = renderPush({
+      ...base,
+      locales: { 'e\x1b[31mn': { created: 1, updated: 0, unchanged: 0, skippedFilled: 0, unknownKeys: ['ca\x1b[31mrt:x'] } },
+      orphans: [{ namespace: 'ca\x1b[31mrt', key: 'legacy' }],
+    });
+    expect(raw).not.toContain('\x1b[31m');
+    expect(raw).toContain('ca\\x1b[31mrt:x');
+  });
+
   it('lists orphans and hints --prune', () => {
     const output: string = plain({
       ...base,
@@ -355,6 +374,33 @@ describe('renderLint', () => {
     it('a count below the names sent never prints a negative remainder', () => {
       const odd = { ...conflicts, keyConflicts: [{ namespace: 'shop', key: 'cart', below: ['cart.a', 'cart.b', 'cart.c', 'cart.d', 'cart.e'], belowCount: 2 }] };
       expect(lines(res(odd), nested)[2]).toBe('  cart  above  cart.a, cart.b, cart.c (+2 more)');
+    });
+
+    it('a capped list of which the rules hide a part: the header counts what is listed, the cap line the server\'s numbers', () => {
+      // Three entries came back of 450; this repo's nested rule writes only `shop`, so two of the three are hidden.
+      const shopOnly = withRules([{ pattern: 'l/{locale}/shop.json', format: 'json', jsonStyle: 'nested', namespace: 'shop' }]);
+      const out: string[] = lines(
+        res({
+          summary: { errors: 0, warnings: 0, locales: [{ locale: 'en', errors: 0, warnings: 0 }], keyConflicts: 450 },
+          keyConflicts: [
+            { namespace: 'admin', key: 'panel', below: ['panel.title'], belowCount: 1 },
+            { namespace: 'other', key: 'x', below: ['x.y'], belowCount: 1 },
+            { namespace: 'shop', key: 'cart', below: ['cart.title'], belowCount: 1 },
+          ],
+          keyConflictsTruncated: true,
+        }),
+        shopOnly,
+      );
+      expect(out.slice(0, 4)).toEqual([
+        'Keys that are also the path above other keys (1):',
+        'shop',
+        '  cart  above  cart.title',
+        'The server listed only the first 3 of 450 such keys in the namespaces linted, so this list may be incomplete.',
+      ]);
+
+      // Capped, and every entry that came back is hidden: nothing to list, so nothing is said at all.
+      const flatOnly = withRules([{ pattern: 'l/{locale}/shop.json', format: 'json', jsonStyle: 'flat', namespace: 'shop' }]);
+      expect(lines(res({ ...conflicts, keyConflictsTruncated: true }), flatOnly)).toEqual(['✔ No issues in 1 locale(s).']);
     });
 
     it('a server that does not send them yet changes nothing', () => {

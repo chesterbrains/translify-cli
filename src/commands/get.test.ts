@@ -75,6 +75,22 @@ describe('runGet', () => {
     expect(out.split('\n')).toHaveLength(5);
   });
 
+  it('the table shows control characters from the server as escapes, in every column; the raw value stays raw', async () => {
+    const cells = [{ locale: 'e\x1b[31mn', isDefault: true, value: 'red\x1b[31m bell\x07', status: 'APPROVED', issueSeverity: null }];
+    const res = { ...RES, namespace: 'com\x1b[31mmon', key: 'promo\x1b[31m.title', cells };
+    const { out } = await run(res, 'promo.title', undefined);
+    expect(out).not.toContain('\x1b');
+    expect(out.split('\n')).toEqual([
+      'Namespace: com\\x1b[31mmon',
+      'Key:       promo\\x1b[31m.title',
+      '',
+      'LOCALE      STATUS    ISSUES  VALUE',
+      'e\\x1b[31mn  APPROVED          red\\x1b[31m bell\\x07',
+    ]);
+    // Asked for on its own, the value is printed exactly as stored: that is what a script reads.
+    expect((await run(res, 'promo.title', 'e\x1b[31mn')).out).toBe('red\x1b[31m bell\x07');
+  });
+
   it('with a locale: the raw value only, real newlines', async () => {
     expect((await run(RES, 'promo.title', 'fr')).out).toBe('Offre\nlimitée');
   });
