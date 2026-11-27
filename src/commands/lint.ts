@@ -26,10 +26,28 @@ export interface LintCell {
   issues: LintIssue[];
 }
 
+/** A key that is also the dotted path above other keys of its namespace (`cart` above `cart.title`). */
+export interface LintKeyConflict {
+  namespace: string;
+  key: string;
+  /** The keys below it, sorted; the server names at most 20. */
+  below: string[];
+  belowCount: number;
+}
+
 export interface LintResponse {
-  summary: { errors: number; warnings: number; locales: Array<{ locale: string; errors: number; warnings: number }> };
+  summary: {
+    errors: number;
+    warnings: number;
+    locales: Array<{ locale: string; errors: number; warnings: number }>;
+    /** Absent on a server older than the key-conflict report. Never part of `errors` or `warnings`. */
+    keyConflicts?: number;
+  };
   cells: LintCell[];
   truncated: boolean;
+  /** Absent on an older server. */
+  keyConflicts?: LintKeyConflict[];
+  keyConflictsTruncated?: boolean;
 }
 
 export const LINT_SEVERITIES = ['error', 'warning'] as const;
@@ -90,9 +108,10 @@ export async function runLint(opts: LintOptions, deps: LintDeps): Promise<ExitCo
   const { errors, warnings } = res.summary;
   deps.out(
     opts.json === true
-      ? JSON.stringify({ response: res, summary: { errors, warnings, truncated: res.truncated } })
+      ? JSON.stringify({ response: res, summary: { errors, warnings, truncated: res.truncated, keyConflicts: res.summary.keyConflicts ?? 0 } })
       : renderLint(res, deps.config, { severity: opts.severity }),
   );
 
+  // Key conflicts are reported, never judged: they do not change the exit code.
   return errors > 0 || (maxWarnings !== undefined && warnings > maxWarnings) ? EXIT.issues : EXIT.ok;
 }

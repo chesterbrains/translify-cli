@@ -2,7 +2,7 @@ import pc from 'picocolors';
 
 import type { PushResponse, TranslationStatus } from './commands/push.js';
 import type { LintCell, LintIssue, LintResponse } from './commands/lint.js';
-import type { Config } from './config.js';
+import type { Config, FileRule } from './config.js';
 import { toFsLocale } from './patterns.js';
 
 const MAX_ORPHANS: number = 20;
@@ -230,9 +230,54 @@ export function renderReasonCells(cells: ReasonCell[], config: Config | undefine
   return lines;
 }
 
+/** What a files rule does with a key that is also the path above other keys; undefined when it holds both. */
+const conflictOutcome = (rule: FileRule): 'json' | 'rails' | undefined => {
+  if (rule.format === 'json') return (rule.jsonStyle ?? 'nested') === 'nested' ? 'json' : undefined;
+
+  return rule.format === 'yaml' && rule.yamlDialect === 'rails' ? 'rails' : undefined;
+};
+
+const MAX_BELOW_SHOWN = 3;
+
+/**
+ * The key conflicts this repo's files cannot hold: only namespaces a nested JSON or Rails YAML rule writes are
+ * listed, since every other layout keeps both keys. Informational: never an error or a warning.
+ */
+export function renderKeyConflicts(res: LintResponse, config: Config): string[] {
+  const outcomes = (namespace: string): Set<'json' | 'rails'> =>
+    new Set(config.files.flatMap((rule) => (rule.namespace === undefined || rule.namespace === namespace ? (conflictOutcome(rule) ?? []) : [])));
+  const shown = (res.keyConflicts ?? []).filter((conflict) => outcomes(conflict.namespace).size > 0);
+  if (shown.length === 0) return [];
+
+  const kinds: Set<'json' | 'rails'> = new Set(shown.flatMap((conflict) => [...outcomes(conflict.namespace)]));
+  const lines: string[] = [pc.bold(`Keys that are also the path above other keys (${shown.length}):`)];
+  let namespace: string | undefined;
+  for (const conflict of shown) {
+    if (conflict.namespace !== namespace) lines.push(conflict.namespace);
+    namespace = conflict.namespace;
+    const more: number = conflict.belowCount - Math.min(conflict.below.length, MAX_BELOW_SHOWN);
+    lines.push(`  ${conflict.key}  above  ${conflict.below.slice(0, MAX_BELOW_SHOWN).join(', ')}${more > 0 ? ` (+${more} more)` : ''}`);
+  }
+  if (res.keyConflictsTruncated === true) {
+    lines.push(pc.yellow(`Showing the first ${res.keyConflicts?.length ?? 0} of ${res.summary.keyConflicts ?? 0} in the project. Narrow with --namespace, or use --json.`));
+  }
+  if (kinds.has('json')) {
+    lines.push('A nested JSON file cannot hold both: `pull` writes one and drops the other. Set "jsonStyle": "flat" on the files rule, or rename one of the two keys.');
+  }
+  if (kinds.has('rails')) lines.push('A Rails YAML file cannot hold both: `pull` refuses it (keyConflict). Rename one of the two keys.');
+  lines.push(pc.dim('Not counted as an error or a warning.'));
+
+  return lines;
+}
+
 export function renderLint(res: LintResponse, config: Config, view: { severity?: 'error' | 'warning' } = {}): string {
   const { errors, warnings } = res.summary;
-  if (errors + warnings === 0) return pc.green(`✔ No issues in ${res.summary.locales.length} locale(s).`);
+  const conflicts: string[] = renderKeyConflicts(res, config);
+  if (errors + warnings === 0) {
+    const clean: string = pc.green(`✔ No issues in ${res.summary.locales.length} locale(s).`);
+
+    return conflicts.length === 0 ? clean : [...conflicts, '', clean].join('\n');
+  }
 
   const lines: string[] = renderIssueCells(res.cells, config);
 
@@ -248,6 +293,10 @@ export function renderLint(res: LintResponse, config: Config, view: { severity?:
     .map((row) => `${toFsLocale(row.locale, config)} ${row.errors}/${row.warnings}`)
     .join(' · ');
   const totals: string = `${plural(errors, 'error')}, ${plural(warnings, 'warning')}${perLocale === '' ? '' : ` — ${perLocale}`}`;
+  if (conflicts.length > 0) {
+    if (lines.length > 0) lines.push('');
+    lines.push(...conflicts);
+  }
   if (lines.length > 0) lines.push('');
   lines.push(errors > 0 ? pc.red(`✖ ${totals}`) : pc.yellow(`⚠ ${totals}`));
 

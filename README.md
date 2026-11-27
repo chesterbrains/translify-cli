@@ -882,6 +882,14 @@ Fail CI when translations in Translify have placeholder errors:
 It covers what this repository pulls: only the namespaces of fixed-`namespace` rules, or the whole
 project when a rule uses `{namespace}`. It needs a key with the `pull` scope.
 
+`lint` also lists **keys that are also the path above other keys** (`cart` beside `cart.title`). Translify stores both and a flat
+file holds both, but a nested file cannot: a nested JSON `pull` writes one and drops the other, a Rails YAML `pull` refuses. The
+list appears only for namespaces that a nested JSON or Rails YAML rule of this repository writes, with what to do about it (set
+`"jsonStyle": "flat"`, or rename one key). It is information only: it is never counted as an error or a warning and never changes
+the exit code, `--max-warnings 0` included. `--json` always carries it, as `response.keyConflicts` (`{ namespace, key, below,
+belowCount }`, at most 200 entries and 20 names each, `keyConflictsTruncated`) and `summary.keyConflicts`. `push` prints a warning
+when it adds a key that forms such a pair. Needs a Translify server that reports them; an older one simply sends none.
+
 ## Exit codes
 
 | Code | Meaning |

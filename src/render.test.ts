@@ -256,6 +256,81 @@ describe('renderLint', () => {
     ]);
   });
 
+  describe('key conflicts', () => {
+    const withRules = (files: unknown[]): Config => ({ apiUrl: 'http://x', files, locales: {} }) as unknown as Config;
+    const nested = withRules([{ pattern: 'locales/{locale}/{namespace}.json', format: 'json', jsonStyle: 'nested' }]);
+    const conflicts = {
+      summary: { errors: 0, warnings: 0, locales: [{ locale: 'en', errors: 0, warnings: 0 }], keyConflicts: 2 },
+      keyConflicts: [
+        { namespace: 'admin', key: 'panel', below: ['panel.title'], belowCount: 1 },
+        { namespace: 'shop', key: 'cart', below: ['cart.a', 'cart.b', 'cart.c', 'cart.d'], belowCount: 30 },
+      ],
+      keyConflictsTruncated: false,
+    };
+    const lines = (r: LintResponse, cfg: Config): string[] => stripVTControlCharacters(renderLint(r, cfg)).split('\n');
+
+    it('a nested JSON rule lists them above the verdict, which stays clean', () => {
+      expect(lines(res(conflicts), nested)).toEqual([
+        'Keys that are also the path above other keys (2):',
+        'admin',
+        '  panel  above  panel.title',
+        'shop',
+        '  cart  above  cart.a, cart.b, cart.c (+27 more)',
+        'A nested JSON file cannot hold both: `pull` writes one and drops the other. Set "jsonStyle": "flat" on the files rule, or rename one of the two keys.',
+        'Not counted as an error or a warning.',
+        '',
+        '✔ No issues in 1 locale(s).',
+      ]);
+    });
+
+    it('a layout that holds both keys says nothing: flat JSON, Symfony YAML, Android, no rule at all', () => {
+      for (const files of [
+        [{ pattern: 'l/{locale}/{namespace}.json', format: 'json', jsonStyle: 'flat' }],
+        [{ pattern: 't/{namespace}.{locale}.yaml', format: 'yaml', yamlDialect: 'symfony', jsonStyle: 'nested' }],
+        [{ pattern: 'app/values-{locale}/strings.xml', format: 'android', namespace: 'shop' }],
+        [],
+      ]) {
+        expect(lines(res(conflicts), withRules(files))).toEqual(['✔ No issues in 1 locale(s).']);
+      }
+    });
+
+    it('only namespaces a nested rule writes are listed; a Rails rule gets its own outcome line', () => {
+      const mixed = withRules([
+        { pattern: 'config/locales/{locale}.yml', format: 'yaml', yamlDialect: 'rails', namespace: 'admin' },
+        { pattern: 'l/{locale}/shop.json', format: 'json', jsonStyle: 'flat', namespace: 'shop' },
+      ]);
+      expect(lines(res(conflicts), mixed)).toEqual([
+        'Keys that are also the path above other keys (1):',
+        'admin',
+        '  panel  above  panel.title',
+        'A Rails YAML file cannot hold both: `pull` refuses it (keyConflict). Rename one of the two keys.',
+        'Not counted as an error or a warning.',
+        '',
+        '✔ No issues in 1 locale(s).',
+      ]);
+    });
+
+    it('sits between the cells and the totals when there are issues, and says when the server capped the list', () => {
+      const out: string[] = lines(
+        res({
+          ...conflicts,
+          summary: { errors: 1, warnings: 0, locales: [{ locale: 'it', errors: 1, warnings: 0 }], keyConflicts: 450 },
+          cells: [cell({})],
+          keyConflictsTruncated: true,
+        }),
+        nested,
+      );
+      expect(out.slice(0, 4)).toEqual(['shop', '  cart.items', '    it       error    missing placeholder {count}', '']);
+      expect(out[4]).toBe('Keys that are also the path above other keys (2):');
+      expect(out).toContain('Showing the first 2 of 450 in the project. Narrow with --namespace, or use --json.');
+      expect(out.slice(-2)).toEqual(['', '✖ 1 error, 0 warnings — it 1/0']);
+    });
+
+    it('a server that does not send them yet changes nothing', () => {
+      expect(lines(res({ summary: { errors: 0, warnings: 0, locales: [] } }), nested)).toEqual(['✔ No issues in 0 locale(s).']);
+    });
+  });
+
   it('words every known issue code', () => {
     const issues = [
       { code: 'PLACEHOLDER_EXTRA', severity: 'ERROR', arg: 'total' },
