@@ -332,7 +332,8 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
   if (!opts.check) {
     for (const item of plan) {
       await mkdir(dirname(item.absolute), { recursive: true });
-      await writeFileAtomic(item.absolute, item.content);
+      // Flushed too: about 4 ms a file, and only files that changed are written.
+      await writeFileAtomic(item.absolute, item.content, { sync: true });
     }
   }
 

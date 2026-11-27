@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { chmod, lstat, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 export interface LockOptions {
   /** How long to wait for another process before giving up. */
@@ -48,15 +48,36 @@ async function realOrNearest(path: string): Promise<string> {
  * This user's own folder of locks inside the OS temp folder (`translify-<uid>`, mode 0700). On a temp folder
  * shared by several users nobody else can then leave a lock that this user cannot remove, or create one in
  * advance under a name that is easy to guess. Windows has no uid and gives every user their own temp folder.
- * A folder of that name that is not a plain directory of this user is refused rather than trusted.
+ * A folder of that name that is not a plain directory of this user is never trusted: someone else got there first
+ * (or the temp folder is unusable), and the locks go to this user's cache folder instead. Every process of the user
+ * meets the same obstacle and so lands in the same place.
  */
-export async function lockFolder(base: string = tmpdir(), uid: number | null = process.getuid?.() ?? null): Promise<string> {
-  const folder: string = join(base, `translify-${uid ?? 'locks'}`);
+export async function lockFolder(
+  base: string = tmpdir(),
+  uid: number | null = process.getuid?.() ?? null,
+  fallback: string = cacheLockFolder(),
+): Promise<string> {
+  try {
+    return await ownFolder(join(base, `translify-${uid ?? 'locks'}`), uid);
+  } catch {
+    return ownFolder(fallback, uid);
+  }
+}
+
+/** `~/.cache/translify/locks` (XDG), `%LOCALAPPDATA%\\translify\\locks` on Windows. */
+export function cacheLockFolder(env: Record<string, string | undefined> = process.env, platform: string = process.platform): string {
+  // An empty or relative value would resolve against the cwd (often a repo); ignore it, as the XDG spec says.
+  const absolute = (value: string | undefined): string | undefined => (value !== undefined && isAbsolute(value) ? value : undefined);
+  const local: string | undefined = absolute(env.LOCALAPPDATA);
+  if (platform === 'win32' && local !== undefined) return join(local, 'translify', 'locks');
+
+  return join(absolute(env.XDG_CACHE_HOME) ?? join(homedir(), '.cache'), 'translify', 'locks');
+}
+
+async function ownFolder(folder: string, uid: number | null): Promise<string> {
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const info = await lstat(folder);
-  if (!info.isDirectory() || (uid !== null && info.uid !== uid)) {
-    throw new Error(`${folder} is not a folder owned by this user; remove it, or point TMPDIR at a folder of your own`);
-  }
+  if (!info.isDirectory() || (uid !== null && info.uid !== uid)) throw new Error(`${folder} is not a folder owned by this user`);
   // Left open by an earlier umask or by hand: close it again.
   if (uid !== null && (info.mode & 0o077) !== 0) await chmod(folder, 0o700);
 
@@ -68,9 +89,23 @@ export async function lockFolder(base: string = tmpdir(), uid: number | null = p
  * created in the working tree.
  */
 export async function lockPathFor(path: string): Promise<string> {
-  const real: string = await realOrNearest(resolve(path));
+  return join(await lockFolder(), `${await lockName(path)}.lock`);
+}
 
-  return join(await lockFolder(), `${createHash('sha256').update(real).digest('hex').slice(0, 32)}.lock`);
+const lockName = async (path: string): Promise<string> =>
+  createHash('sha256')
+    .update(await realOrNearest(resolve(path)))
+    .digest('hex')
+    .slice(0, 32);
+
+/**
+ * Where CLI 0.13.4 kept the lock of a file: straight in the temp folder. This version takes that lock as well,
+ * after its own, so the two versions running at once on one file (a stale `npx` cache beside a global install)
+ * still take turns. Best effort only: it sits in a folder others can write to, so it is never allowed to block
+ * for good. Drop it once 0.13.4 is no longer around.
+ */
+export async function legacyLockPathFor(path: string, base: string = tmpdir()): Promise<string> {
+  return join(base, `translify-${await lockName(path)}.lock`);
 }
 
 interface Seen {
@@ -147,6 +182,7 @@ export async function withFileLock<T>(
   platform: string = process.platform,
 ): Promise<T | typeof BUSY> {
   const lock: string = await lockPathFor(path);
+  const legacy: string = await legacyLockPathFor(path);
   const token: string = randomBytes(16).toString('hex');
   const deadline: number = Date.now() + options.waitMs;
 
@@ -159,9 +195,39 @@ export async function withFileLock<T>(
     await sleep(5 + Math.floor(Math.random() * 30));
   }
 
+  let legacyHeld = false;
   try {
-    return await fn(async () => (await look(lock, platform))?.token === token);
+    const older: 'held' | 'skipped' | 'busy' = await holdLegacy(legacy, token, deadline, options, platform);
+    if (older === 'busy') return BUSY;
+    legacyHeld = older === 'held';
+
+    return await fn(
+      async () =>
+        (await look(lock, platform))?.token === token && (!legacyHeld || (await look(legacy, platform).catch(() => undefined))?.token === token),
+    );
   } finally {
+    if (legacyHeld) await removeIfToken(legacy, token, platform).catch(() => undefined);
     await removeIfToken(lock, token, platform);
+  }
+}
+
+/**
+ * Take the 0.13.4 lock too, waiting for a live holder like for any lock. Anything that goes wrong with it (the
+ * temp folder refuses the file, a dead lock of another user cannot be removed) is `skipped`: the own lock is held,
+ * and a lock in a shared folder must not be able to stop this version from working.
+ */
+async function holdLegacy(lock: string, token: string, deadline: number, options: LockOptions, platform: string): Promise<'held' | 'skipped' | 'busy'> {
+  try {
+    while (!(await create(lock, token, platform))) {
+      if (Date.now() >= deadline) return 'busy';
+      const seen: Seen | undefined = await look(lock, platform);
+      if (seen !== undefined && stale(seen, options.staleMs)) await removeIfStale(lock, seen.token, options.staleMs, platform);
+      else if (seen === undefined) continue;
+      await sleep(5 + Math.floor(Math.random() * 30));
+    }
+
+    return 'held';
+  } catch {
+    return 'skipped';
   }
 }

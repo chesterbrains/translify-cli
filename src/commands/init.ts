@@ -151,7 +151,7 @@ export async function runInit(deps: InitDeps): Promise<ExitCode> {
 
     return EXIT.failed;
   }
-  await writeFileAtomic(target, text);
+  await writeFileAtomic(target, text, { sync: true });
   deps.out(me === undefined ? NO_KEY_LINE : 'Wrote translify.json.');
 
   return EXIT.ok;
