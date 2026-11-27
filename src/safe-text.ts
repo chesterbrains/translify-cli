@@ -30,3 +30,11 @@ export function safeText(text: string): string {
     return point <= 0xff ? `\\x${point.toString(16).padStart(2, '0')}` : `\\u${point.toString(16).padStart(4, '0')}`;
   });
 }
+
+/**
+ * A count from a server answer, for a sentence. It is a number when the server is what it should be; printed
+ * through `safeText` all the same, so that text sent where a number belongs is shown, not obeyed.
+ */
+export function safeCount(value: unknown): string {
+  return safeText(String(value));
+}

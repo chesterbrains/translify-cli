@@ -63,6 +63,18 @@ describe('renderPush', () => {
     expect(raw).toContain('ca\\x1b[31mrt:x');
   });
 
+  it('counts are printed through the same escape: text sent where a number belongs cannot drive the terminal', () => {
+    const raw: string = renderPush({
+      ...base,
+      locales: { en: { created: '1\x1b[2J' as never, updated: 0, unchanged: 0, skippedFilled: 0, unknownKeys: [] } },
+      pruned: '2\x1b[2J' as never,
+      orphans: [{ namespace: 'cart', key: 'legacy' }],
+    });
+    expect(raw).not.toContain('\x1b[2J');
+    expect(raw).toContain('1\\x1b[2J created');
+    expect(raw).toContain('2\\x1b[2J key(s)');
+  });
+
   it('lists orphans and hints --prune', () => {
     const output: string = plain({
       ...base,
