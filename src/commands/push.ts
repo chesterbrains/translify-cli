@@ -18,6 +18,10 @@ export interface PushOptions {
   yes?: boolean;
   namespace?: string;
   json?: boolean;
+  /** Keep running and push source-locale files when they change (`runWatch`). */
+  watch?: boolean;
+  /** With `watch`: the quiet period in milliseconds, as typed. */
+  debounce?: string;
   /** Status target cells land in. Omitted → the server decides from the project's review setting. */
   status?: PushStatusFlag;
 }
