@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { checkbox, confirm, input, password } from '@inquirer/prompts';
 import { Command, Option } from 'commander';
 
@@ -10,6 +13,7 @@ import { runPublish } from './commands/publish.js';
 import { runPull, type PullOptions } from './commands/pull.js';
 import { PUSH_STATUSES, runPush, type PushOptions } from './commands/push.js';
 import { runSet, type SetOptions } from './commands/set.js';
+import { runWatch } from './commands/watch.js';
 import { loadConfig, type Config } from './config.js';
 import { askConfirm } from './confirm.js';
 import { findKey, resolveKey, saveKey } from './credentials.js';
@@ -111,8 +115,54 @@ program
   .addOption(
     new Option('--status <status>', 'status target-locale cells land in (default: needs-review when the project requires review, approved otherwise)').choices(PUSH_STATUSES),
   )
+  .option('--watch', 'keep running: push source-locale files when they change (Ctrl-C to stop)')
+  .option('--debounce <ms>', 'with --watch: quiet time after the last change before pushing (default 2000, minimum 500)')
   .option('--json', 'machine-readable output')
   .action(async (opts: PushOptions) => {
+    if (opts.watch === true || opts.debounce !== undefined) {
+      const base = await withApi();
+      process.exitCode = await runWatch(opts, {
+        ...base,
+        out,
+        err,
+        clock: () => new Date(),
+        now: () => Date.now(),
+        stat: async (path: string) => {
+          try {
+            const { mtimeMs, size } = await stat(join(base.cwd, path));
+
+            return { mtimeMs, size };
+          } catch {
+            return undefined;
+          }
+        },
+        read: async (path: string) => new Uint8Array(await readFile(join(base.cwd, path))),
+        sleep: (ms: number) => {
+          let wake: () => void = () => undefined;
+          const done: Promise<void> = new Promise((resolve) => {
+            const timer: NodeJS.Timeout = setTimeout(resolve, ms);
+            wake = (): void => {
+              clearTimeout(timer);
+              resolve();
+            };
+          });
+
+          return { done, wake };
+        },
+        onSignal: (handler: () => void) => {
+          process.on('SIGINT', handler);
+          process.on('SIGTERM', handler);
+
+          return (): void => {
+            process.off('SIGINT', handler);
+            process.off('SIGTERM', handler);
+          };
+        },
+        exit: (code: number) => process.exit(code),
+      });
+
+      return;
+    }
     process.exitCode = await runPush(opts, {
       ...(await withApi()),
       isTty: Boolean(process.stdin.isTTY && process.stderr.isTTY),

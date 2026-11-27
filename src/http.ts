@@ -140,7 +140,7 @@ const describeBody = (status: number, body: ErrorBody): string => {
 };
 
 const explain = (status: number, body: ErrorBody): CliError =>
-  new CliError(exitFor(status, body.code), describeBody(status, body), body);
+  new CliError(exitFor(status, body.code), describeBody(status, body), body, status);
 
 /** Retry-After is delta-seconds or an HTTP date; anything else falls back to exponential backoff. Capped. */
 export const retryDelayMs = (header: string | null, attempt: number, now: number = Date.now()): number => {

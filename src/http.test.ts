@@ -13,6 +13,15 @@ const fail = async (status: number, body: unknown): Promise<CliError> => {
 };
 
 describe('Api', () => {
+  it('an HTTP refusal carries its status; a network failure carries none', async () => {
+    expect((await fail(422, { code: 'VALIDATION_FAILED' })).status).toBe(422);
+
+    const down = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+    const error = (await new Api('https://x/api', 'sk_abc', down).get('/x').catch((caught: unknown) => caught)) as CliError;
+    expect(error.status).toBeUndefined();
+    expect(error.exitCode).toBe(4);
+  });
+
   it('sends the bearer key and the CLI user agent', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(reply(200, { ok: true }));
     await new Api('https://x/api', 'sk_abc', fetchImpl).get('/cli/v1/whoami');

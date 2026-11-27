@@ -53,6 +53,29 @@ describe('README', () => {
     }
   });
 
+  it('documents push --watch: the flags, what it never does, the orphan note and the review caveat', () => {
+    const commands: string = section('Commands');
+    for (const needle of ['--watch', '--debounce <ms>']) expect(commands, needle).toContain(needle);
+    const watch: string = section('Watch');
+    for (const needle of [
+      'translify push --watch',
+      'source',
+      'never',
+      '--prune',
+      '--overwrite-targets',
+      '--dry-run',
+      '--json',
+      'back to review',
+      'Ctrl-C',
+      '2000',
+      '--debounce',
+      'default locale',
+      'Retrying',
+    ]) {
+      expect(watch, needle).toContain(needle);
+    }
+  });
+
   it('documents the two iOS rules, the identifier-key rule and the stringsdict-wins note', () => {
     const ios: string = section('iOS (.strings / .stringsdict)');
 

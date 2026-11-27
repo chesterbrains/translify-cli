@@ -8,6 +8,8 @@ export class CliError extends Error {
     readonly exitCode: ExitCode,
     message: string,
     readonly details?: unknown,
+    /** The HTTP status of the server's refusal. Absent when no answer came (network, timeout) and for local errors. */
+    readonly status?: number,
   ) {
     super(message);
   }
