@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { harness } from './harness.js';
+import { CliError, EXIT } from '../errors.js';
+import { answer, counts, harness } from './harness.js';
 
 /** Far past the 3 s "young file" window of files written at mtime 0. */
 const T: number = 100_000;
@@ -118,5 +119,290 @@ describe('WatchSession.scan', () => {
 
     expect(clash.err).toEqual(['12:04:31 locales/en/cart.json is matched by more than one files rule.']);
     expect([...clash.session.dirty]).toEqual([]);
+  });
+});
+
+describe('WatchSession.tick', () => {
+  const refusal = (status: number | undefined, code: string, message: string = code): CliError =>
+    new CliError(status === 402 ? EXIT.quota : status === 401 ? EXIT.auth : EXIT.failed, message, { code }, status);
+  /** Started and settled: the first tick has pushed everything. */
+  const started = async (files: Record<string, string> = FILES) => {
+    const h = await harness(files);
+    expect(await h.session.tick(T, true)).toBe('continue');
+    h.post.mockClear();
+    h.get.mockClear();
+    h.out.length = 0;
+
+    return h;
+  };
+
+  it('the first tick pushes every namespace at once, one request each in name order, with one summary line', async () => {
+    const h = await harness(FILES);
+
+    expect(await h.session.tick(T, true)).toBe('continue');
+
+    expect(h.post).toHaveBeenCalledTimes(2);
+    expect(h.post.mock.calls[0]![0]).toBe('/cli/v1/push');
+    expect(h.manifest(0).map((file) => file.path)).toEqual(['locales/en/cart.json']);
+    expect(h.manifest(1).map((file) => file.path)).toEqual(['locales/en/nav.json']);
+    expect(h.out).toEqual(['12:04:31 pushed 2 namespace(s): 0 created, 0 updated, 2 unchanged']);
+    expect([...h.session.dirty]).toEqual([]);
+  });
+
+  it('a change is pushed only after the quiet period, and only its namespace', async () => {
+    const h = await started();
+    await h.put('locales/en/cart.json', '{"a":"A","b":"B"}', T + 1000);
+    h.post.mockResolvedValue(answer({ locales: { en: counts({ created: 1, unchanged: 1 }) } }));
+
+    await h.session.tick(T + 1000);
+    await h.session.tick(T + 2500);
+    expect(h.post).not.toHaveBeenCalled();
+
+    await h.session.tick(T + 3100);
+    expect(h.post).toHaveBeenCalledTimes(1);
+    expect(h.manifest(0)).toEqual([expect.objectContaining({ path: 'locales/en/cart.json', namespace: 'cart', locale: 'en' })]);
+    expect(h.flag(0, 'dryRun')).toBe('false');
+    expect(h.flag(0, 'prune')).toBe('false');
+    expect(h.flag(0, 'overwriteTargets')).toBe('false');
+    expect(h.out).toEqual(['12:04:31 cart: 1 created']);
+  });
+
+  it('two saves inside the quiet period make one push, counted from the last save', async () => {
+    const h = await started();
+    await h.put('locales/en/cart.json', '{"a":"1"}', T + 1000);
+    await h.session.tick(T + 1000);
+    await h.put('locales/en/cart.json', '{"a":"2"}', T + 2500);
+    await h.session.tick(T + 2500);
+    await h.session.tick(T + 3100);
+    expect(h.post).not.toHaveBeenCalled();
+
+    await h.session.tick(T + 4600);
+    expect(h.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('bytes changed and changed back send nothing', async () => {
+    const h = await started();
+    await h.put('locales/en/cart.json', '{"a":"typo"}', T + 1000);
+    await h.session.tick(T + 1000);
+    await h.put('locales/en/cart.json', '{"a":"A"}', T + 1500);
+    await h.session.tick(T + 1500);
+
+    await h.session.tick(T + 9000);
+    expect(h.post).not.toHaveBeenCalled();
+    expect(h.out).toEqual([]);
+    expect([...h.session.dirty]).toEqual([]);
+  });
+
+  it('the request carries every source file of the namespace and the status flag', async () => {
+    const h = await harness(
+      { 'en.lproj/Localizable.strings': '"a" = "A";', 'en.lproj/Localizable.stringsdict': '<plist/>' },
+      { status: 'draft' },
+      {
+        files: [
+          { pattern: '{locale}.lproj/Localizable.strings', format: 'strings', namespace: 'app' },
+          { pattern: '{locale}.lproj/Localizable.stringsdict', format: 'stringsdict', namespace: 'app' },
+        ],
+      },
+    );
+
+    await h.session.tick(T, true);
+
+    expect(h.post).toHaveBeenCalledTimes(1);
+    expect(h.manifest(0).map((file) => file.path)).toEqual(['en.lproj/Localizable.strings', 'en.lproj/Localizable.stringsdict']);
+    expect(h.flag(0, 'status')).toBe('DRAFT');
+  });
+
+  it('a 422 prints, lets the other namespace go, and is not sent again until the file changes', async () => {
+    const h = await harness(FILES);
+    h.post.mockRejectedValueOnce(refusal(422, 'VALIDATION_FAILED', 'The push was rejected; nothing was written.\nlocales/en/cart.json:1: syntax'));
+
+    expect(await h.session.tick(T, true)).toBe('continue');
+
+    expect(h.post).toHaveBeenCalledTimes(2);
+    expect(h.err).toEqual(['12:04:31 cart: The push was rejected; nothing was written.\n         locales/en/cart.json:1: syntax']);
+    expect(h.out).toEqual(['12:04:31 pushed 1 namespace(s): 0 created, 0 updated, 1 unchanged']);
+
+    await h.session.tick(T + 10_000);
+    await h.session.tick(T + 60_000);
+    expect(h.post).toHaveBeenCalledTimes(2);
+
+    // The next save of that file retries it.
+    await h.put('locales/en/cart.json', '{"a":"fixed"}', T + 61_000);
+    await h.session.tick(T + 61_000);
+    await h.session.tick(T + 63_100);
+    expect(h.post).toHaveBeenCalledTimes(3);
+    expect(h.manifest(2)[0]!.namespace).toBe('cart');
+  });
+
+  it('a network error keeps the namespace dirty and retries after 2, 5, 15 then 30 s', async () => {
+    const h = await started();
+    await h.put('locales/en/cart.json', '{"a":"new"}', T);
+    await h.session.tick(T + 5000);
+    h.post.mockRejectedValue(new CliError(EXIT.network, 'Could not reach https://x/api.'));
+
+    let now: number = T + 8000;
+    await h.session.tick(now);
+    expect(h.post).toHaveBeenCalledTimes(1);
+    expect(h.err).toEqual(['12:04:31 cart: Could not reach https://x/api. Retrying in 2 s.']);
+
+    for (const [wait, calls] of [[2000, 2], [5000, 3], [15_000, 4], [30_000, 5], [30_000, 6]] as const) {
+      await h.session.tick(now + wait - 1);
+      expect(h.post).toHaveBeenCalledTimes(calls - 1);
+      now += wait;
+      await h.session.tick(now);
+      expect(h.post).toHaveBeenCalledTimes(calls);
+    }
+    expect([...h.session.dirty]).toEqual(['cart']);
+
+    h.post.mockResolvedValue(answer());
+    await h.session.tick(now + 30_000);
+    expect([...h.session.dirty]).toEqual([]);
+  });
+
+  it('a new save during the backoff starts over with the quiet period', async () => {
+    const h = await started();
+    await h.put('locales/en/cart.json', '{"a":"new"}', T);
+    await h.session.tick(T + 5000);
+    h.post.mockRejectedValueOnce(new CliError(EXIT.network, 'down')).mockRejectedValueOnce(new CliError(EXIT.network, 'down'));
+    await h.session.tick(T + 8000);
+    await h.session.tick(T + 10_000);
+    expect(h.post).toHaveBeenCalledTimes(2);
+
+    // Next retry would be 5 s later; a save in between pushes after 2 s of quiet instead.
+    await h.put('locales/en/cart.json', '{"a":"newer"}', T + 11_000);
+    await h.session.tick(T + 11_000);
+    await h.session.tick(T + 13_000);
+    expect(h.post).toHaveBeenCalledTimes(3);
+  });
+
+  it('a 409 is retried like a network error', async () => {
+    const h = await harness(FILES);
+    h.post.mockRejectedValueOnce(refusal(409, 'TRANSACTION_CONFLICT', 'The server hit a transaction conflict. Try again.'));
+
+    expect(await h.session.tick(T, true)).toBe('continue');
+    // The pass ends at the first retryable failure: nav waits for the retry too.
+    expect(h.post).toHaveBeenCalledTimes(1);
+    expect([...h.session.dirty].sort()).toEqual(['cart', 'nav']);
+
+    await h.session.tick(T + 2000);
+    expect(h.post).toHaveBeenCalledTimes(3);
+  });
+
+  it('a 401 returns the auth exit code and starts no further request', async () => {
+    const h = await harness(FILES);
+    h.post.mockRejectedValueOnce(refusal(401, 'KEY_REVOKED', 'This key was revoked. Create a new secret key in Translify.'));
+
+    expect(await h.session.tick(T, true)).toBe(EXIT.auth);
+    expect(h.post).toHaveBeenCalledTimes(1);
+    expect(h.err).toEqual(['12:04:31 This key was revoked. Create a new secret key in Translify.']);
+  });
+
+  it('a 402 prints and waits for the next save', async () => {
+    const h = await harness(FILES);
+    h.post.mockRejectedValueOnce(refusal(402, 'QUOTA_EXCEEDED', 'Plan limit reached'));
+
+    expect(await h.session.tick(T, true)).toBe('continue');
+    await h.session.tick(T + 60_000);
+
+    expect(h.post).toHaveBeenCalledTimes(2);
+    expect(h.err).toEqual(['12:04:31 cart: Plan limit reached']);
+  });
+
+  it('whoami failing with a network error backs off; with a 401 it ends the watch', async () => {
+    const h = await harness(FILES);
+    h.get.mockRejectedValueOnce(new CliError(EXIT.network, 'Could not reach https://x/api.'));
+
+    expect(await h.session.tick(T, true)).toBe('continue');
+    expect(h.post).not.toHaveBeenCalled();
+    expect(h.err).toEqual(['12:04:31 Could not reach https://x/api. Retrying in 2 s.']);
+
+    h.get.mockRejectedValueOnce(refusal(401, 'KEY_INVALID', 'The key was not recognised.'));
+    expect(await h.session.tick(T + 2000)).toBe(EXIT.auth);
+    expect(h.post).not.toHaveBeenCalled();
+  });
+
+  it('a changed default locale ends the watch with exit 1 before any push', async () => {
+    const h = await harness(FILES);
+    h.get.mockResolvedValue({ project: { defaultLocale: 'it' } });
+
+    expect(await h.session.tick(T, true)).toBe(EXIT.failed);
+    expect(h.post).not.toHaveBeenCalled();
+    expect(h.err).toEqual(["12:04:31 The project's default locale changed from en to it; stopping. Run translify push --watch again."]);
+  });
+
+  it('a file that vanishes between scan and push does not throw; its next appearance is pushed', async () => {
+    const h = await started();
+    await h.put('locales/en/cart.json', '{"a":"new"}', T);
+    await h.session.tick(T + 5000);
+    // Unreadable at push time only: the scan of that tick still hashes it.
+    const real = h.read.getMockImplementation()!;
+    let failures: number = 0;
+    h.read.mockImplementation(async (path: string) => {
+      if (path === 'locales/en/cart.json' && h.session.dirty.has('cart') && failures === 0 && h.get.mock.calls.length > 0) {
+        failures += 1;
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      }
+
+      return real(path);
+    });
+
+    expect(await h.session.tick(T + 8000)).toBe('continue');
+    expect(failures).toBe(1);
+    expect(h.post).not.toHaveBeenCalled();
+
+    // Same bytes as the scan saw before: it must still go up once readable again.
+    await h.session.tick(T + 8500);
+    await h.session.tick(T + 11_000);
+    expect(h.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('the orphan note prints when the count changes, not on every push', async () => {
+    const h = await started();
+    const orphans = [{ namespace: 'cart', key: 'old' }, { namespace: 'cart', key: 'older' }];
+    h.post.mockResolvedValue(answer({ orphans }));
+    const save = async (at: number, text: string): Promise<void> => {
+      await h.put('locales/en/cart.json', text, at);
+      await h.session.tick(at);
+      await h.session.tick(at + 2000);
+    };
+
+    await save(T + 10_000, '{"a":"1"}');
+    await save(T + 20_000, '{"a":"2"}');
+    h.post.mockResolvedValue(answer({ orphans: [orphans[0]!] }));
+    await save(T + 30_000, '{"a":"3"}');
+    h.post.mockResolvedValue(answer());
+    await save(T + 40_000, '{"a":"4"}');
+
+    expect(h.out.filter((line) => line.includes('not in your source files'))).toEqual([
+      '         2 key(s) in Translify are not in your source files (cart). Run translify push --prune when done.',
+      '         1 key(s) in Translify are not in your source files (cart). Run translify push --prune when done.',
+    ]);
+  });
+
+  it('warnings and the stale reset follow the push line, indented', async () => {
+    const h = await started();
+    h.post.mockResolvedValue(answer({ locales: { en: counts({ updated: 1 }) }, warnings: ['locales/en/cart.json: odd'], staleReset: 2 }));
+    await h.put('locales/en/cart.json', '{"a":"new"}', T);
+    await h.session.tick(T + 5000);
+    await h.session.tick(T + 8000);
+
+    expect(h.out).toEqual([
+      '12:04:31 cart: 1 updated',
+      '         warning: locales/en/cart.json: odd',
+      '         2 approved translation(s) went back to review because their source text changed.',
+    ]);
+  });
+
+  it('stopping mid-pass: the request in flight completes, the next namespace is not sent', async () => {
+    const h = await harness(FILES);
+    h.post.mockImplementationOnce(async () => {
+      h.stopping.value = true;
+
+      return answer();
+    });
+
+    expect(await h.session.tick(T, true)).toBe('continue');
+    expect(h.post).toHaveBeenCalledTimes(1);
+    expect([...h.session.dirty]).toEqual(['nav']);
   });
 });

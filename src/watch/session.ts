@@ -1,13 +1,16 @@
 import { createHash } from 'node:crypto';
 
-import type { PushStatusFlag } from '../commands/push.js';
+import type { PushResponse, PushStatusFlag, Upload } from '../commands/push.js';
 import type { Config } from '../config.js';
 import type { Api } from '../http.js';
 import type { Match, PathContext } from '../patterns.js';
-import { CliError } from '../errors.js';
+import type { ExitCode } from '../errors.js';
+import { buildForm, PUSH_PATH } from '../commands/push.js';
+import { CliError, EXIT } from '../errors.js';
 import { findFiles } from '../patterns.js';
 import { safeText } from '../safe-text.js';
-import { stamp } from './lines.js';
+import { followUps, INDENT, orphanNote, pushLine, stamp, startSummary } from './lines.js';
+import { watchVerdict } from './verdict.js';
 
 export interface WatchOptions {
   namespace?: string;
@@ -45,6 +48,16 @@ interface Seen extends FileStat {
 /** A file this young may be saved again inside the file system's mtime granularity: never trust its stat. */
 const YOUNG_MS: number = 3000;
 
+/** `continue`, or the exit code the watch ends with. */
+export type TickResult = 'continue' | ExitCode;
+
+/** Wait before the same push is sent again; the last one repeats. */
+export const BACKOFF_MS: readonly number[] = [2000, 5000, 15_000, 30_000];
+
+interface Whoami {
+  project?: { defaultLocale: string | null };
+}
+
 export const hashOf = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
 /**
@@ -60,19 +73,23 @@ export class WatchSession {
   lastScanMs: number = 0;
 
   /** What the last scan saw, by path. */
-  protected seen: Map<string, Seen> = new Map();
-  protected lastChangeAt: number = 0;
-  protected retryAttempt: number = 0;
-  protected retryAt: number = 0;
+  private seen: Map<string, Seen> = new Map();
+  private lastChangeAt: number = 0;
+  private retryAttempt: number = 0;
+  private retryAt: number = 0;
   private scanError: string | undefined;
+  /** Per namespace, the hash of each file last sent and answered (accepted or refused): those bytes are not sent again. */
+  private readonly attempted: Map<string, Map<string, string>> = new Map();
+  /** Per namespace, the orphan count last told. */
+  private readonly orphans: Map<string, number> = new Map();
 
   constructor(
-    protected readonly opts: WatchOptions,
-    protected readonly deps: SessionDeps,
-    protected readonly source: { defaultLocale: string; context: PathContext },
+    private readonly opts: WatchOptions,
+    private readonly deps: SessionDeps,
+    private readonly source: { defaultLocale: string; context: PathContext },
   ) {}
 
-  protected line(text: string): string {
+  private line(text: string): string {
     return `${stamp(this.deps.clock())} ${text}`;
   }
 
@@ -159,7 +176,149 @@ export class WatchSession {
   }
 
   /** A namespace that has no source file any more. */
-  protected forget(namespace: string): void {
+  private forget(namespace: string): void {
     this.dirty.delete(namespace);
+    this.attempted.delete(namespace);
+  }
+
+  /** One poll, then a push when one is due. `immediate` skips the quiet period: the push a watch starts with. */
+  async tick(nowMs: number, immediate: boolean = false): Promise<TickResult> {
+    await this.scan(nowMs);
+    if (this.dirty.size === 0 || nowMs < this.retryAt) return 'continue';
+    if (!immediate && nowMs - this.lastChangeAt < this.opts.debounceMs) return 'continue';
+
+    return this.pass(nowMs, immediate);
+  }
+
+  private async pass(nowMs: number, immediate: boolean): Promise<TickResult> {
+    // Read again before every pass: after a default switch these files would go up as targets of the new default.
+    let me: Whoami;
+    try {
+      me = await this.deps.api.get<Whoami>('/cli/v1/whoami');
+    } catch (error) {
+      const outcome: TickResult | 'next' = this.failed(undefined, error, nowMs);
+
+      return outcome === 'next' ? 'continue' : outcome;
+    }
+    const current: string | null = me.project?.defaultLocale ?? null;
+    if (current !== this.source.defaultLocale) {
+      this.deps.err(
+        this.line(
+          `The project's default locale changed from ${safeText(this.source.defaultLocale)} to ${safeText(String(current))}; stopping. Run translify push --watch again.`,
+        ),
+      );
+
+      return EXIT.failed;
+    }
+
+    const pushed: PushResponse[] = [];
+    const extras: string[] = [];
+    let result: TickResult = 'continue';
+    for (const namespace of [...this.dirty].sort()) {
+      if (this.deps.stopping()) break;
+      const uploads: Upload[] | undefined = await this.uploadsOf(namespace);
+      if (uploads === undefined) continue;
+      const hashes: Map<string, string> = new Map(uploads.map((upload) => [upload.match.path, hashOf(upload.bytes)]));
+      if (this.sameAsAttempted(namespace, hashes)) {
+        // Changed and changed back: nothing to say.
+        this.dirty.delete(namespace);
+        continue;
+      }
+
+      let res: PushResponse;
+      try {
+        res = await this.deps.api.post<PushResponse>(PUSH_PATH, buildForm(uploads, { status: this.opts.status }, false, false));
+      } catch (error) {
+        const outcome: TickResult | 'next' = this.failed({ namespace, hashes }, error, nowMs);
+        if (outcome === 'next') continue;
+        // A retryable failure ends the pass (the rest would fail the same way); a stop ends the watch.
+        result = outcome;
+        break;
+      }
+
+      this.attempted.set(namespace, hashes);
+      this.dirty.delete(namespace);
+      this.retryAttempt = 0;
+      const notes: string[] = [...followUps(res), ...this.orphanLines(namespace, res)].map((text) => `${INDENT}${text}`);
+      if (immediate) {
+        pushed.push(res);
+        extras.push(...notes);
+      } else {
+        this.deps.out(this.line(pushLine(namespace, res, this.source.defaultLocale)));
+        for (const note of notes) this.deps.out(note);
+      }
+    }
+    if (pushed.length > 0) {
+      this.deps.out(this.line(startSummary(pushed, this.source.defaultLocale)));
+      for (const note of extras) this.deps.out(note);
+    }
+
+    return result;
+  }
+
+  /** The namespace's source files as read now, or undefined when one cannot be read. */
+  private async uploadsOf(namespace: string): Promise<Upload[] | undefined> {
+    const matches: Match[] = this.files.filter((match) => match.namespace === namespace);
+    try {
+      return await Promise.all(
+        matches.map(async (match, index) => ({ match, field: `file${index}`, bytes: await this.deps.read(match.path) })),
+      );
+    } catch {
+      // Gone or unreadable since the poll (an editor mid-save). Not pushed now, and forgotten as seen, so the
+      // next poll that can read it marks the namespace again even when the bytes are the ones seen before.
+      this.dirty.delete(namespace);
+      for (const match of matches) this.seen.delete(match.path);
+
+      return undefined;
+    }
+  }
+
+  private sameAsAttempted(namespace: string, hashes: Map<string, string>): boolean {
+    const before: Map<string, string> | undefined = this.attempted.get(namespace);
+
+    return before !== undefined && before.size === hashes.size && [...hashes].every(([path, hash]) => before.get(path) === hash);
+  }
+
+  private orphanLines(namespace: string, res: PushResponse): string[] {
+    const count: number = Array.isArray(res.orphans) ? res.orphans.length : 0;
+    if (count === (this.orphans.get(namespace) ?? 0)) return [];
+    this.orphans.set(namespace, count);
+
+    return count === 0 ? [] : [orphanNote(namespace, count)];
+  }
+
+  /**
+   * A failed request, by `watchVerdict`. `next`: these files were refused and are not sent again until they
+   * change. `continue`: nothing wrong with the files, the pass ends and goes again after a backoff. An exit
+   * code: the watch ends. `pushing` is absent for the whoami read.
+   */
+  private failed(
+    pushing: { namespace: string; hashes: Map<string, string> } | undefined,
+    error: unknown,
+    nowMs: number,
+  ): TickResult | 'next' {
+    const verdict = watchVerdict(error);
+    // `watchVerdict` rethrows anything else; the message is the CLI's own wording, already safe to print.
+    const { message, exitCode } = error as CliError;
+    const text: string = message.split('\n').join(`\n${INDENT}`);
+    const label: string = pushing === undefined ? '' : `${safeText(pushing.namespace)}: `;
+    if (verdict === 'stop') {
+      this.deps.err(this.line(text));
+
+      return exitCode;
+    }
+    if (verdict === 'wait' && pushing !== undefined) {
+      this.attempted.set(pushing.namespace, pushing.hashes);
+      this.dirty.delete(pushing.namespace);
+      this.deps.err(this.line(`${label}${text}`));
+
+      return 'next';
+    }
+    const delay: number = BACKOFF_MS[Math.min(this.retryAttempt, BACKOFF_MS.length - 1)]!;
+    this.retryAttempt += 1;
+    this.retryAt = nowMs + delay;
+    this.deps.err(this.line(`${label}${text} Retrying in ${delay / 1000} s.`));
+
+    return 'continue';
   }
 }
