@@ -18,6 +18,8 @@ jobs:
       - run: pnpm build
       # Real processes on one file: the lock and the atomic write between separate programs.
       - run: pnpm test:parallel
+      # A real `push --watch` process: polling, timers and the stop signal.
+      - run: pnpm test:watch-smoke
   # The file lock and the atomic write take Windows-only paths (rename onto an open file, a lock name pending
   # deletion). Windows minutes count double, so this job runs only what differs there.
   windows:
@@ -31,3 +33,5 @@ jobs:
       - run: pnpm exec vitest run src/file-lock.test.ts src/file-write.test.ts src/json-patch.test.ts
       - run: pnpm build
       - run: pnpm test:parallel
+      # The watch polls the file system and runs on timers: one real run where paths and mtimes differ.
+      - run: pnpm test:watch-smoke
