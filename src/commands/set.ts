@@ -1,6 +1,7 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
+import { safeText } from '../safe-text.js';
 import type { Config, FileRule } from '../config.js';
 import { pathContext } from '../context.js';
 import { CliError, EXIT, type ExitCode } from '../errors.js';
@@ -332,12 +333,12 @@ export async function runSet(key: string, locale: string, value: string, opts: S
     return EXIT.ok;
   }
 
-  deps.out(`${verbOf(res)} ${res.key} (${res.locale}) in namespace ${res.namespace}. Status: ${res.status.toLowerCase().replaceAll('_', '-')}.`);
+  deps.out(safeText(`${verbOf(res)} ${res.key} (${res.locale}) in namespace ${res.namespace}. Status: ${res.status.toLowerCase().replaceAll('_', '-')}.`));
   if (res.staleReset > 0) deps.out(`${res.staleReset} approved translation(s) moved back to needs-review.`);
   if (res.statusDowngraded) deps.out('Requested approved, landed needs-review: the translation has placeholder errors.');
   for (const issue of res.issues ?? []) {
     const detail: string = issue.arg !== undefined ? ` ${issue.arg}` : issue.categories !== undefined && issue.categories.length > 0 ? ` ${issue.categories.join(', ')}` : '';
-    deps.out(`warning: placeholder ${issue.severity.toLowerCase()}: ${issue.code}${detail}`);
+    deps.out(safeText(`warning: placeholder ${issue.severity.toLowerCase()}: ${issue.code}${detail}`));
   }
   if (local.line !== undefined) deps.out(local.line);
 

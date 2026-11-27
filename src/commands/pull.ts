@@ -2,6 +2,7 @@ import fg from 'fast-glob';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
+import { safeText } from '../safe-text.js';
 import { type Config, type FileRule, isSymfonyDialect } from '../config.js';
 import type { ExitCode } from '../errors.js';
 import { insideFolder, writeFileAtomic } from '../file-write.js';
@@ -290,7 +291,7 @@ export async function runPull(opts: PullOptions, deps: PullDeps): Promise<ExitCo
           if (merged.warnings.includes(warning)) continue;
           merged.warnings.push(warning);
         }
-        lines.push(`warning: ${warning}`);
+        lines.push(`warning: ${safeText(warning)}`);
         if (!flatHinted && NESTED_CONFLICT.test(warning)) {
           flatHinted = true;
           lines.push('hint: set "jsonStyle": "flat" on this files rule in translify.json to keep both keys.');

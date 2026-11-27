@@ -4,6 +4,7 @@ import type { PushResponse, TranslationStatus } from './commands/push.js';
 import type { LintCell, LintIssue, LintResponse } from './commands/lint.js';
 import type { Config, FileRule } from './config.js';
 import { toFsLocale } from './patterns.js';
+import { safeText } from './safe-text.js';
 
 const MAX_ORPHANS: number = 20;
 const MAX_UNKNOWN: number = 5;
@@ -118,8 +119,10 @@ const VALUE_INDENT: string = ' '.repeat(22);
 const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`;
 const braces = (arg: string | undefined): string => `{${arg ?? '?'}}`;
 
-/** One line of plain English per issue; a code this CLI does not know prints as-is. */
-const issueText = (issue: LintIssue): string => {
+/** One line of plain English per issue; a code this CLI does not know prints as-is. Arguments, messages and codes are the server's. */
+const issueText = (issue: LintIssue): string => safeText(issueWords(issue));
+
+const issueWords = (issue: LintIssue): string => {
   const categories: string = (issue.categories ?? []).join(', ');
   switch (issue.code) {
     case 'ICU_INVALID':
@@ -156,13 +159,13 @@ export function renderIssueCells(cells: IssueCell[], config: Config | undefined)
     if (cell.namespace !== namespace) {
       namespace = cell.namespace;
       key = undefined;
-      lines.push(pc.bold(namespace));
+      lines.push(pc.bold(safeText(namespace)));
     }
     if (cell.key !== key) {
       key = cell.key;
-      lines.push(`  ${key}`);
+      lines.push(`  ${safeText(key)}`);
     }
-    const locale: string = (config === undefined ? cell.locale : toFsLocale(cell.locale, config)).padEnd(8);
+    const locale: string = safeText(config === undefined ? cell.locale : toFsLocale(cell.locale, config)).padEnd(8);
     for (const issue of cell.issues) {
       const label: string = issue.severity === 'ERROR' ? pc.red('error'.padEnd(8)) : pc.yellow('warning'.padEnd(8));
       lines.push(`    ${locale} ${label} ${issueText(issue)}`);
@@ -217,14 +220,14 @@ export function renderReasonCells(cells: ReasonCell[], config: Config | undefine
     if (cell.namespace !== namespace) {
       namespace = cell.namespace;
       key = undefined;
-      lines.push(pc.bold(namespace));
+      lines.push(pc.bold(safeText(namespace)));
     }
     if (cell.key !== key) {
       key = cell.key;
-      lines.push(`  ${key}`);
+      lines.push(`  ${safeText(key)}`);
     }
-    const locale: string = (config === undefined ? cell.locale : toFsLocale(cell.locale, config)).padEnd(8);
-    lines.push(`    ${locale} ${pc.red('error'.padEnd(8))} ${REASON_TEXT[cell.reason] ?? cell.reason}`);
+    const locale: string = safeText(config === undefined ? cell.locale : toFsLocale(cell.locale, config)).padEnd(8);
+    lines.push(`    ${locale} ${pc.red('error'.padEnd(8))} ${REASON_TEXT[cell.reason] ?? safeText(cell.reason)}`);
   }
 
   return lines;
@@ -258,10 +261,10 @@ export function renderKeyConflicts(res: LintResponse, config: Config): string[] 
   const lines: string[] = [pc.bold(`Keys that are also the path above other keys (${shown.length}):`)];
   let namespace: string | undefined;
   for (const conflict of shown) {
-    if (conflict.namespace !== namespace) lines.push(conflict.namespace);
+    if (conflict.namespace !== namespace) lines.push(safeText(conflict.namespace));
     namespace = conflict.namespace;
     const more: number = Math.max(conflict.belowCount, conflict.below.length) - Math.min(conflict.below.length, MAX_BELOW_SHOWN);
-    lines.push(`  ${conflict.key}  above  ${conflict.below.slice(0, MAX_BELOW_SHOWN).join(', ')}${more > 0 ? ` (+${more} more)` : ''}`);
+    lines.push(`  ${safeText(conflict.key)}  above  ${safeText(conflict.below.slice(0, MAX_BELOW_SHOWN).join(', '))}${more > 0 ? ` (+${more} more)` : ''}`);
   }
   if (res.keyConflictsTruncated === true) {
     // The server's count covers every namespace that was linted, also ones no nested rule here writes.
@@ -296,7 +299,7 @@ export function renderLint(res: LintResponse, config: Config, view: { severity?:
 
   const perLocale: string = res.summary.locales
     .filter((row) => row.errors + row.warnings > 0)
-    .map((row) => `${toFsLocale(row.locale, config)} ${row.errors}/${row.warnings}`)
+    .map((row) => `${safeText(toFsLocale(row.locale, config))} ${row.errors}/${row.warnings}`)
     .join(' · ');
   const totals: string = `${plural(errors, 'error')}, ${plural(warnings, 'warning')}${perLocale === '' ? '' : ` — ${perLocale}`}`;
   if (conflicts.length > 0) {
